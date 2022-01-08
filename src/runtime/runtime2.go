@@ -408,6 +408,7 @@ type g struct {
 	// stackguard1 is the stack pointer compared in the C stack growth prologue.
 	// It is stack.lo+StackGuard on g0 and gsignal stacks.
 	// It is ~0 on other goroutine stacks, to trigger a call to morestackc (and crash).
+	// 执行栈
 	stack       stack   // offset known to runtime/cgo
 	stackguard0 uintptr // offset known to liblink
 	stackguard1 uintptr // offset known to liblink
@@ -415,7 +416,7 @@ type g struct {
 	_panic    *_panic // innermost panic - offset known to liblink
 	_defer    *_defer // innermost defer
 	m         *m      // current m; offset known to arm liblink
-	sched     gobuf
+	sched     gobuf   // 用户保存执行现场
 	syscallsp uintptr // if status==Gsyscall, syscallsp = sched.sp to use during gc
 	syscallpc uintptr // if status==Gsyscall, syscallpc = sched.pc to use during gc
 	stktopsp  uintptr // expected sp at top of stack, to check in traceback
@@ -475,9 +476,9 @@ type g struct {
 	sigcode0       uintptr
 	sigcode1       uintptr
 	sigpc          uintptr
-	gopc           uintptr         // pc of go statement that created this goroutine
+	gopc           uintptr         // pc of go statement that created this goroutine // 调用者 PC/IP
 	ancestors      *[]ancestorInfo // ancestor information goroutine(s) that created this goroutine (only used if debug.tracebackancestors)
-	startpc        uintptr         // pc of goroutine function
+	startpc        uintptr         // pc of goroutine function // 任务函数
 	racectx        uintptr
 	waiting        *sudog         // sudog structures this g is waiting on (that have a valid elem ptr); in lock order
 	cgoCtxt        []uintptr      // cgo traceback context
@@ -509,7 +510,7 @@ const (
 )
 
 type m struct {
-	g0      *g     // goroutine with scheduling stack
+	g0      *g     // goroutine with scheduling stack // 提供系统栈空间
 	morebuf gobuf  // gobuf arg to morestack
 	divmod  uint32 // div/mod denominator for arm - known to liblink
 
@@ -519,11 +520,11 @@ type m struct {
 	goSigStack    gsignalStack      // Go-allocated signal handling stack
 	sigmask       sigset            // storage for saved signal mask
 	tls           [tlsSlots]uintptr // thread-local storage (for x86 extern register)
-	mstartfn      func()
-	curg          *g       // current running goroutine
+	mstartfn      func()            // 启动函数
+	curg          *g       // current running goroutine // 当前运行的 G
 	caughtsig     guintptr // goroutine running during fatal signal
-	p             puintptr // attached p for executing go code (nil if not executing go code)
-	nextp         puintptr
+	p             puintptr // attached p for executing go code (nil if not executing go code) // 绑定 P
+	nextp         puintptr // 临时存放 P
 	oldp          puintptr // the p that was attached before executing a syscall
 	id            int64
 	mallocing     int32
@@ -546,7 +547,7 @@ type m struct {
 	cgoCallersUse uint32      // if non-zero, cgoCallers in use temporarily
 	cgoCallers    *cgoCallers // cgo traceback if crashing in cgo call
 	doesPark      bool        // non-P running threads: sysmon and newmHandoff never use .park
-	park          note
+	park          note        // 休眠锁
 	alllink       *m // on allm
 	schedlink     muintptr
 	lockedg       guintptr
@@ -639,6 +640,7 @@ type p struct {
 	runnext guintptr
 
 	// Available G's (status == Gdead)
+	// P 本地可复用的 G 对象 （dead 状态的 G）
 	gFree struct {
 		gList
 		n int32
@@ -759,7 +761,7 @@ type schedt struct {
 	// When increasing nmidle, nmidlelocked, nmsys, or nmfreed, be
 	// sure to call checkdead().
 
-	midle        muintptr // idle m's waiting for work
+	midle        muintptr // idle m's waiting for work // 闲置的 M 链表
 	nmidle       int32    // number of idle m's waiting for work
 	nmidlelocked int32    // number of locked m's waiting for work
 	mnext        int64    // number of m's that have been created and next M ID
@@ -790,6 +792,7 @@ type schedt struct {
 	}
 
 	// Global cache of dead G's.
+	// schedt 下保存的全局可复用 G 对象链表 （如果 P 本地拿不到，就会从这里拿）
 	gFree struct {
 		lock    mutex
 		stack   gList // Gs with stacks
@@ -1105,6 +1108,7 @@ var (
 	allpLock mutex
 	// len(allp) == gomaxprocs; may change at safe points, otherwise
 	// immutable.
+	// 所有的 P 都会存在这个数组里
 	allp []*p
 	// Bitmask of Ps in _Pidle list, one bit per P. Reads and writes must
 	// be atomic. Length may change at safe points.

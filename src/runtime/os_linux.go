@@ -310,8 +310,11 @@ func getHugePageSize() uintptr {
 	return uintptr(v)
 }
 
+// 确定 cpu 核心数
 func osinit() {
+	// cpu 核心数，赋值给 runtime.ncpu
 	ncpu = getproccount()
+	// 确定物理页大小，赋值给 malloc.physHugePageSize
 	physHugePageSize = getHugePageSize()
 	if iscgo {
 		// #42494 glibc and musl reserve some signals for

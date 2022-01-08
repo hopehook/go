@@ -56,6 +56,7 @@ func mcall(fn func(*g))
 //	})
 //	... use x ...
 //
+// 切换到 g0 栈后，再执行运行时相关管理操作
 //go:noescape
 func systemstack(fn func())
 

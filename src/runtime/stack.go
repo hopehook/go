@@ -72,6 +72,7 @@ const (
 	_StackSystem = goos.IsWindows*512*goarch.PtrSize + goos.IsPlan9*512 + goos.IsIos*goarch.IsArm64*1024
 
 	// The minimum size of stack used by Go code
+	// G 最小的栈大小是 2 K bytes
 	_StackMin = 2048
 
 	// The minimum stack size to allocate.
