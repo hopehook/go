@@ -377,32 +377,47 @@ TEXT runtime·mstart(SB),NOSPLIT|TOPFRAME,$0
 // func gogo(buf *gobuf)
 // restore state from Gobuf; longjmp
 TEXT runtime·gogo(SB), NOSPLIT, $0-8
-	MOVQ	buf+0(FP), BX		// gobuf
-	MOVQ	gobuf_g(BX), DX
+	MOVQ	buf+0(FP), BX		// gobuf // 将第一个 FP 伪寄存器所指向的 gobuf 的第一个参数存入 BX 寄存器, gobuf 的一个参数即是 SP 指针
+	MOVQ	gobuf_g(BX), DX     // 将 gp.sched.g 保存到 DX 寄存器
 	MOVQ	0(DX), CX		// make sure g != nil
 	JMP	gogo<>(SB)
 
 TEXT gogo<>(SB), NOSPLIT, $0
+    // 将 tls (thread local storage) 保存到 CX 寄存器，然后把 gp.sched.g 放到 tls[0]，
+    // 这样以后调用 getg() 之时就可以通过 TLS 直接获取到当前 goroutine 的 g 结构体实例，
+    // 进而可以得到 g 所在的 m 和 p，TLS 里一开始存储的是系统堆栈 g0 的地址
 	get_tls(CX)
 	MOVQ	DX, g(CX)
+
+	// 下面的指令则是对函数栈的 BP/SP 寄存器(指针)的存取，最后进入到指定的代码区域，执行函数栈帧
 	MOVQ	DX, R14		// set the g register
 	MOVQ	gobuf_sp(BX), SP	// restore SP // 通过恢复 SP 寄存器值切换到 G 栈
 	MOVQ	gobuf_ret(BX), AX
 	MOVQ	gobuf_ctxt(BX), DX
 	MOVQ	gobuf_bp(BX), BP
+
+	// 这里是在清空 gp.sched，因为前面已经把 gobuf 里的字段值都存入了寄存器，
+    // 所以 gp.sched 就可以提前清空了，不需要等到后面 GC 来回收，减轻 GC 的负担
 	MOVQ	$0, gobuf_sp(BX)	// clear to help garbage collector
 	MOVQ	$0, gobuf_ret(BX)
 	MOVQ	$0, gobuf_ctxt(BX)
 	MOVQ	$0, gobuf_bp(BX)
+
+    // 把 gp.sched.pc 值放入 BX 寄存器，其中 PC 指针指向 gogo 退出时需要执行的函数地址
 	MOVQ	gobuf_pc(BX), BX    // 获取 G 任务函数地址
+	// 用 BX 寄存器里的值去修改 CPU 的 IP 寄存器，这样就可以根据 CS:IP 寄存器的段地址+偏移量跳转到 BX 寄存器里的地址，也就是 gp.sched.pc
 	JMP	BX                      // 执行 G 任务函数
 
 // func mcall(fn func(*g))
 // Switch to m->g0's stack, call fn(g).
 // Fn must never return. It should gogo(&g->sched)
 // to keep running g.
+
 // 实现 "断点恢复" 的关键由 mcall 实现，它将当前执行状态，包括 SP、PC 等值保存到 G.sched 区域
 // 当 execute 的 gogo 再次执行该任务时，自然可以从中恢复任务，因为执行栈是自带的，不用担心丢失
+
+// 可以看到 runtime.mcall 函数的主要逻辑是从当前 goroutine 切换回 g0 的系统堆栈，然后调用 fn(g)，此处的 g 即是当前运行的 goroutine
+// 这个方法会保存当前运行的 G 的 PC/SP 到 g->sched 里，以便该 G 可以在以后被重新恢复执行，因为也涉及到寄存器和堆栈指针的操作，所以也需要使用汇编实现
 TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT, $0-8
 	MOVQ	AX, DX	// DX = fn
 
@@ -415,7 +430,7 @@ TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT, $0-8
 
 	// switch to m->g0 & its stack, call fn
 	MOVQ	g_m(R14), BX
-	MOVQ	m_g0(BX), SI	// SI = g.m.g0
+	MOVQ	m_g0(BX), SI	// SI = g.m.g0  // 把 g0 的栈指针存入 SI 寄存器，后面需要用到
 	CMPQ	SI, R14	// if g == m->g0 call badmcall
 	JNE	goodm
 	JMP	runtime·badmcall(SB)

@@ -353,6 +353,7 @@ func goschedguarded() {
 // Reason explains why the goroutine has been parked. It is displayed in stack
 // traces and heap dumps. Reasons should be unique and descriptive. Do not
 // re-use reasons, add new ones.
+
 // 与 Gosched 最大的区别在于 gopark 并没有将 G 放回待运行队列。必须主动恢复，否则该 G 任务会丢失
 func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason waitReason, traceEv byte, traceskip int) {
 	if reason != waitReasonSleep {
@@ -371,6 +372,9 @@ func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason w
 	mp.waittraceskip = traceskip
 	releasem(mp)
 	// can't do anything that might move the G between Ms here.
+
+	// gopark 最终会调用 park_m，在这个函数内部会调用 unlockf，也就是 netpollblockcommit，
+	// 然后会把当前的 goroutine，也就是 g 数据结构保存到 pollDesc 的 rg 或者 wg 指针里
 	mcall(park_m)
 }
 

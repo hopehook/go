@@ -20,9 +20,11 @@ type FD struct {
 	fdmu fdMutex
 
 	// System file descriptor. Immutable until Close.
+	// 真正的系统文件描述符
 	Sysfd int
 
 	// I/O poller.
+	// 底层事件驱动的封装
 	pd pollDesc
 
 	// Writev cache.
@@ -160,9 +162,12 @@ func (fd *FD) Read(p []byte) (int, error) {
 		p = p[:maxRW]
 	}
 	for {
+		// 尝试从该 socket 读取数据，因为 socket 在被 listener accept 的时候设置成了非阻塞 I/O，所以这里同样也是直接返回，不管有没有可读的数据
 		n, err := ignoringEINTRIO(syscall.Read, fd.Sysfd, p)
 		if err != nil {
 			n = 0
+			// err == syscall.EAGAIN 表示当前没有期待的 I/O 事件发生，也就是 socket 不可读
+			// 会通过 park goroutine 让逻辑 block 在这里
 			if err == syscall.EAGAIN && fd.pd.pollable() {
 				if err = fd.pd.waitRead(fd.isFile); err == nil {
 					continue

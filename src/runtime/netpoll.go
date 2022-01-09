@@ -236,6 +236,8 @@ func poll_runtime_pollWait(pd *pollDesc, mode int) int {
 	if GOOS == "solaris" || GOOS == "illumos" || GOOS == "aix" {
 		netpollarm(pd, mode)
 	}
+	// 进入 netpollblock 并且判断是否有期待的 I/O 事件发生，
+	// 这里的 for 循环是为了一直等到 io ready
 	for !netpollblock(pd, int32(mode), false) {
 		errcode = netpollcheckerr(pd, int32(mode))
 		if errcode != pollNoError {
@@ -376,6 +378,9 @@ func poll_runtime_pollUnblock(pd *pollDesc) {
 // whether the fd is ready for reading or writing or both.
 //
 // This may run while the world is stopped, so write barriers are not allowed.
+
+// netpollready 调用 netpollunblock 返回就绪 fd 对应的 goroutine 的抽象数据结构 g
+
 //go:nowritebarrier
 func netpollready(toRun *gList, pd *pollDesc, mode int32) {
 	var rg, wg *g
@@ -409,7 +414,10 @@ func netpollcheckerr(pd *pollDesc, mode int32) int {
 	return pollNoError
 }
 
+// netpollblockcommit 在 gopark 函数里被调用
 func netpollblockcommit(gp *g, gpp unsafe.Pointer) bool {
+	// 通过原子操作把当前 goroutine 抽象的数据结构 g，也就是这里的参数 gp 存入 gpp 指针，
+	// 此时 gpp 的值是 pollDesc 的 rg 或者 wg 指针
 	r := atomic.Casuintptr((*uintptr)(gpp), pdWait, uintptr(unsafe.Pointer(gp)))
 	if r {
 		// Bump the count of goroutines waiting for the poller.
@@ -431,17 +439,22 @@ func netpollgoready(gp *g, traceskip int) {
 // can hold only a single waiting goroutine for each mode.
 // runtime.netpollblock 是 Goroutine 等待 I/O 事件的关键函数，它会使用运行时提供的 runtime.gopark 让出当前线程，将 Goroutine 转换到休眠状态并等待运行时的唤醒。
 func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
+	// gpp 保存的是 goroutine 的数据结构 g，这里会根据 mode 的值决定是 rg 还是 wg，
+	// 前面提到过，rg 和 wg 是用来保存等待 I/O 就绪的 gorouine 的，后面调用 gopark 之后，
+	// 会把当前的 goroutine 的抽象数据结构 g 存入 gpp 这个指针，也就是 rg 或者 wg
 	gpp := &pd.rg
 	if mode == 'w' {
 		gpp = &pd.wg
 	}
 
 	// set the gpp semaphore to pdWait
+	// 这个 for 循环是为了等待 io ready 或者 io wait
 	for {
 		// Consume notification if already ready.
 		if atomic.Casuintptr(gpp, pdReady, 0) {
 			return true
 		}
+		// 如果没有期待的 I/O 事件发生，则通过原子操作把 gpp 的值置为 pdWait 并退出 for 循环
 		if atomic.Casuintptr(gpp, 0, pdWait) {
 			break
 		}
@@ -456,7 +469,15 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	// need to recheck error states after setting gpp to pdWait
 	// this is necessary because runtime_pollUnblock/runtime_pollSetDeadline/deadlineimpl
 	// do the opposite: store to closing/rd/wd, membarrier, load of rg/wg
+	// waitio 此时是 false，netpollcheckerr 方法会检查当前 pollDesc 对应的 fd 是否是正常的，
+
+	// 通常来说  netpollcheckerr(pd, mode) == 0 是成立的，所以这里会执行 gopark
+	// 把当前 goroutine 给 park 住，直至对应的 fd 上发生可读/可写或者其他『期待的』I/O 事件为止，
+	// 然后 unpark 返回，在 gopark 内部会把当前 goroutine 的抽象数据结构 g 存入
+	// gpp(pollDesc.rg/pollDesc.wg) 指针里，以便在后面的 netpoll 函数取出 pollDesc 之后，
+	// 把 g 添加到链表里返回，接着重新调度 goroutine
 	if waitio || netpollcheckerr(pd, mode) == pollNoError {
+		// 注册 netpollblockcommit 回调给 gopark，在 gopark 内部会执行它，保存当前 goroutine 到 gpp
 		gopark(netpollblockcommit, unsafe.Pointer(gpp), waitReasonIOWait, traceEvGoBlockNet, 5)
 	}
 	// be careful to not lose concurrent pdReady notification
@@ -467,13 +488,16 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	return old == pdReady
 }
 
+// netpollunblock 会依据传入的 mode 决定从 pollDesc 的 rg 或者 wg， 取出当时 gopark 之时存入的 goroutine
 func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
+	// mode == 'r' 代表当时 gopark 是为了等待读事件，而 mode == 'w' 则代表是等待写事件
 	gpp := &pd.rg
 	if mode == 'w' {
 		gpp = &pd.wg
 	}
 
 	for {
+		// 取出 gpp 存储的 g
 		old := atomic.Loaduintptr(gpp)
 		if old == pdReady {
 			return nil
@@ -487,10 +511,13 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 		if ioready {
 			new = pdReady
 		}
+		// 重置 pollDesc 的 rg 或者 wg
 		if atomic.Casuintptr(gpp, old, new) {
+			// 如果该 goroutine 还是必须等待，则返回 nil
 			if old == pdWait {
 				old = 0
 			}
+			// 通过万能指针还原成 g 并返回
 			return (*g)(unsafe.Pointer(old))
 		}
 	}

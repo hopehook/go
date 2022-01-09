@@ -309,6 +309,7 @@ func setMNoWB(mp **m, new *m) {
 	(*muintptr)(unsafe.Pointer(mp)).set(new)
 }
 
+// gobuf 存储 goroutine 调度上下文信息的结构体
 type gobuf struct {
 	// The offsets of sp, pc, and g are known to (hard-coded in) libmach.
 	//
@@ -324,7 +325,7 @@ type gobuf struct {
 	// write barriers.
 	sp   uintptr
 	pc   uintptr
-	g    guintptr
+	g    guintptr // 持有当前 gobuf 的 goroutine
 	ctxt unsafe.Pointer
 	ret  uintptr
 	lr   uintptr

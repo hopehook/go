@@ -18,6 +18,7 @@ import (
 // Wrapper around the socket system call that marks the returned file
 // descriptor as nonblocking and close-on-exec.
 func sysSocket(family, sotype, proto int) (int, error) {
+	// 调用 linux 系统调用 socket 创建 listener fd 并设置为为阻塞 I/O
 	s, err := socketFunc(family, sotype|syscall.SOCK_NONBLOCK|syscall.SOCK_CLOEXEC, proto)
 	// On Linux the SOCK_NONBLOCK and SOCK_CLOEXEC flags were
 	// introduced in 2.6.27 kernel and on FreeBSD both flags were

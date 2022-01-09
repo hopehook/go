@@ -22,6 +22,7 @@ func epollwait(epfd int32, ev *epollevent, nev, timeout int32) int32
 func closeonexec(fd int32)
 
 var (
+	// 全局唯一的 epoll fd，只在 listener fd 初始化之时被指定一次
 	epfd int32 = -1 // epoll descriptor
 
 	netpollBreakRd, netpollBreakWr uintptr // for netpollBreak
@@ -30,6 +31,8 @@ var (
 )
 
 // 初始化网络轮询器
+// netpollinit 会创建一个 epoll 实例，然后把 epoll fd 赋值给 epfd，
+// 后续 listener 以及它 accept 的所有 sockets 有关 epoll 的操作都是基于这个全局的 epfd
 func netpollinit() {
 	// epollcreate1 创建一个新的 epoll 文件描述符 epfd，这个文件描述符会在整个程序的生命周期中使用；
 	epfd = epollcreate1(_EPOLL_CLOEXEC)
@@ -67,7 +70,11 @@ func netpollIsPollDescriptor(fd uintptr) bool {
 	return fd == uintptr(epfd) || fd == netpollBreakRd || fd == netpollBreakWr
 }
 
+
 // 监听文件描述符上的边缘触发事件，创建事件并加入监听；
+
+// netpollopen 会被 runtime_pollOpen 调用，注册 fd 到 epoll 实例，
+// 注意这里使用的是 epoll 的 ET 模式，同时会利用万能指针把 pollDesc 保存到 epollevent 的一个 8 位的字节数组 data 里
 func netpollopen(fd uintptr, pd *pollDesc) int32 {
 	var ev epollevent
 	ev.events = _EPOLLIN | _EPOLLOUT | _EPOLLRDHUP | _EPOLLET
@@ -86,8 +93,9 @@ func netpollarm(pd *pollDesc, mode int) {
 }
 
 // netpollBreak interrupts an epollwait.
-// 唤醒网络轮询器，例如：计时器向前修改时间时会通过该函数中断网络轮询器；
+// netpollBreak 往通信管道里写入信号去唤醒 epollwait
 func netpollBreak() {
+	// 通过 CAS 避免重复的唤醒信号被写入管道，从而减少系统调用并节省一些系统资源
 	if atomic.Cas(&netpollWakeSig, 0, 1) {
 		for {
 			var b byte
@@ -137,6 +145,7 @@ func netpoll(delay int64) gList {
 	}
 	var events [128]epollevent
 retry:
+	// 超时等待就绪的 fd 读写事件
 	n := epollwait(epfd, &events[0], int32(len(events)), waitms)
 	if n < 0 {
 		if n != -_EINTR {
@@ -150,6 +159,7 @@ retry:
 		}
 		goto retry
 	}
+	// toRun 是一个 g 的链表，存储要恢复的 goroutines，最后返回给调用方
 	var toRun gList
 	for i := int32(0); i < n; i++ {
 		ev := &events[i]
@@ -157,6 +167,9 @@ retry:
 			continue
 		}
 
+		// Go scheduler 在调用 findrunnable() 寻找 goroutine 去执行的时候，
+		// 在调用 netpoll 之时会检查当前是否有其他线程同步阻塞在 netpoll，
+		// 若是，则调用 netpollBreak 来唤醒那个线程，避免它长时间阻塞
 		if *(**uintptr)(unsafe.Pointer(&ev.data)) == &netpollBreakRd {
 			if ev.events != _EPOLLIN {
 				println("runtime: netpoll: break fd ready for", ev.events)
@@ -173,6 +186,8 @@ retry:
 			continue
 		}
 
+		// 判断发生的事件类型，读类型或者写类型等，然后给 mode 复制相应的值，
+		// mode 用来决定从 pollDesc 里的 rg 还是 wg 里取出 goroutine
 		var mode int32
 		if ev.events&(_EPOLLIN|_EPOLLRDHUP|_EPOLLHUP|_EPOLLERR) != 0 {
 			mode += 'r'
@@ -181,11 +196,14 @@ retry:
 			mode += 'w'
 		}
 		if mode != 0 {
+			// 取出保存在 epollevent 里的 pollDesc
 			pd := *(**pollDesc)(unsafe.Pointer(&ev.data))
 			pd.everr = false
 			if ev.events == _EPOLLERR {
 				pd.everr = true
 			}
+			// 调用 netpollready，传入就绪 fd 的 pollDesc，
+			// 把 fd 对应的 goroutine 添加到链表 toRun 中
 			netpollready(&toRun, pd, mode)
 		}
 	}

@@ -32,14 +32,25 @@ type pollDesc struct {
 	runtimeCtx uintptr
 }
 
+// 使用 sync.Once 来确保一个 listener 只持有一个 epoll 实例
 var serverInit sync.Once
 
+
+// netFD.init 会调用 poll.FD.Init 并最终调用到 pollDesc.init，
+// 它会创建 epoll 实例并把 listener fd 加入监听队列
 func (pd *pollDesc) init(fd *FD) error {
+	// runtime_pollServerInit 通过 `go:linkname` 链接到具体的实现函数 poll_runtime_pollServerInit，
+	// 接着再调用 netpollGenericInit，然后会根据不同的系统平台去调用特定的 netpollinit 来创建 epoll 实例
 	serverInit.Do(runtime_pollServerInit)
+
+	// runtime_pollOpen 内部调用了 netpollopen 来将 listener fd 注册到
+	// epoll 实例中，另外，它会初始化一个 pollDesc 并返回
 	ctx, errno := runtime_pollOpen(uintptr(fd.Sysfd))
 	if errno != 0 {
 		return errnoErr(syscall.Errno(errno))
 	}
+	// 把真正初始化完成的 pollDesc 实例赋值给当前的 pollDesc 代表自身的指针，
+	// 后续使用直接通过该指针操作
 	pd.runtimeCtx = ctx
 	return nil
 }
