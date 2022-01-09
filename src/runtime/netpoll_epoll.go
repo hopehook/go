@@ -29,7 +29,9 @@ var (
 	netpollWakeSig uint32 // used to avoid duplicate calls of netpollBreak
 )
 
+// 初始化网络轮询器
 func netpollinit() {
+	// epollcreate1 创建一个新的 epoll 文件描述符 epfd，这个文件描述符会在整个程序的生命周期中使用；
 	epfd = epollcreate1(_EPOLL_CLOEXEC)
 	if epfd < 0 {
 		epfd = epollcreate(1024)
@@ -39,6 +41,8 @@ func netpollinit() {
 		}
 		closeonexec(epfd)
 	}
+	// 通过 runtime.nonblockingPipe 创建一个用于通信的管道；
+	// 初始化的管道为我们提供了中断多路复用等待文件描述符中事件的方法，runtime.netpollBreak 会向管道中写入数据唤醒 epoll
 	r, w, errno := nonblockingPipe()
 	if errno != 0 {
 		println("runtime: pipe failed with", -errno)
@@ -48,6 +52,7 @@ func netpollinit() {
 		events: _EPOLLIN,
 	}
 	*(**uintptr)(unsafe.Pointer(&ev.data)) = &netpollBreakRd
+	// 使用 epollctl 将用于读取数据的文件描述符打包成 epollevent 事件加入监听；
 	errno = epollctl(epfd, _EPOLL_CTL_ADD, r, &ev)
 	if errno != 0 {
 		println("runtime: epollctl failed with", -errno)
@@ -57,10 +62,12 @@ func netpollinit() {
 	netpollBreakWr = uintptr(w)
 }
 
+// 判断文件描述符是否被轮询器使用
 func netpollIsPollDescriptor(fd uintptr) bool {
 	return fd == uintptr(epfd) || fd == netpollBreakRd || fd == netpollBreakWr
 }
 
+// 监听文件描述符上的边缘触发事件，创建事件并加入监听；
 func netpollopen(fd uintptr, pd *pollDesc) int32 {
 	var ev epollevent
 	ev.events = _EPOLLIN | _EPOLLOUT | _EPOLLRDHUP | _EPOLLET
@@ -68,6 +75,7 @@ func netpollopen(fd uintptr, pd *pollDesc) int32 {
 	return -epollctl(epfd, _EPOLL_CTL_ADD, int32(fd), &ev)
 }
 
+// 从全局的 epfd 中删除待监听的文件描述符
 func netpollclose(fd uintptr) int32 {
 	var ev epollevent
 	return -epollctl(epfd, _EPOLL_CTL_DEL, int32(fd), &ev)
@@ -78,10 +86,12 @@ func netpollarm(pd *pollDesc, mode int) {
 }
 
 // netpollBreak interrupts an epollwait.
+// 唤醒网络轮询器，例如：计时器向前修改时间时会通过该函数中断网络轮询器；
 func netpollBreak() {
 	if atomic.Cas(&netpollWakeSig, 0, 1) {
 		for {
 			var b byte
+			// 向管道中写入数据唤醒 epoll
 			n := write(netpollBreakWr, unsafe.Pointer(&b), 1)
 			if n == 1 {
 				break
@@ -103,6 +113,10 @@ func netpollBreak() {
 // delay < 0: blocks indefinitely
 // delay == 0: does not block, just polls
 // delay > 0: block for up to that many nanoseconds
+// 轮询网络并返回一组已经准备就绪的 Goroutine，传入的参数会决定它的行为；
+//  - 如果参数小于 0，无限期等待文件描述符就绪；
+//  - 如果参数等于 0，非阻塞地轮询网络；
+//  - 如果参数大于 0，阻塞特定时间轮询网络；
 func netpoll(delay int64) gList {
 	if epfd == -1 {
 		return gList{}

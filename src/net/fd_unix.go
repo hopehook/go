@@ -37,6 +37,7 @@ func newFD(sysfd, family, sotype int, net string) (*netFD, error) {
 	return ret, nil
 }
 
+// net.netFD.init 会调用 internal/poll.pollDesc.init
 func (fd *netFD) init() error {
 	return fd.pfd.Init(fd.net, true)
 }

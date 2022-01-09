@@ -68,6 +68,12 @@ const pollBlockSize = 4 * 1024
 //
 // No heap pointers.
 //
+
+// 该结构体中包含用于监控可读和可写状态的变量，我们按照功能将它们分成以下四组：
+// rseq 和 wseq  — 表示文件描述符被重用或者计时器被重置；
+// rg 和 wg      — 表示二进制的信号量，可能为 pdReady、pdWait、等待文件描述符可读或者可写的 Goroutine 以及 nil；
+// rd 和 wd      — 等待文件描述符可读或者可写的截止日期；
+// rt 和 wt      — 用于等待文件描述符的计时器；
 //go:notinheap
 type pollDesc struct {
 	link *pollDesc // in pollcache, protected by pollcache.lock
@@ -423,6 +429,7 @@ func netpollgoready(gp *g, traceskip int) {
 // waitio - wait only for completed IO, ignore errors
 // Concurrent calls to netpollblock in the same mode are forbidden, as pollDesc
 // can hold only a single waiting goroutine for each mode.
+// runtime.netpollblock 是 Goroutine 等待 I/O 事件的关键函数，它会使用运行时提供的 runtime.gopark 让出当前线程，将 Goroutine 转换到休眠状态并等待运行时的唤醒。
 func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	gpp := &pd.rg
 	if mode == 'w' {

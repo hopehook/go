@@ -33,7 +33,7 @@ const (
 type hchan struct {
 	qcount   uint           // total data in the queue    // 缓冲槽内实际元素的数量
 	dataqsiz uint           // size of the circular queue // 缓冲槽大小
-	buf      unsafe.Pointer // points to an array of dataqsiz elements // 缓冲槽的指针
+	buf      unsafe.Pointer // points to an array of dataqsiz elements // 缓冲槽的指针，指向底层循环数组，只有缓冲型的 channel 才有
 	elemsize uint16         // 元素大小
 	closed   uint32         // channel 是否关闭了
 	elemtype *_type // element type  // 元素类型
@@ -49,6 +49,7 @@ type hchan struct {
 	// Do not change another G's status while holding this lock
 	// (in particular, do not ready a G), as this can deadlock
 	// with stack shrinking.
+	// lock 用来保证每个读 channel 或写 channel 的操作都是原子的。
 	lock mutex
 }
 
