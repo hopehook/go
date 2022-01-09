@@ -99,6 +99,7 @@ const (
 	// The guard leaves enough room for one _StackSmall frame plus
 	// a _StackLimit chain of NOSPLIT calls plus _StackSystem
 	// bytes for the OS.
+	// _StackGuard 是一个警戒值，用来判断栈容量是否需要扩张
 	_StackGuard = 928*sys.StackGuardMultiplier + _StackSystem
 
 	// After a stack split check the SP is allowed to be this
@@ -1156,6 +1157,7 @@ func isShrinkStackSafe(gp *g) bool {
 //
 // gp must be stopped and we must own its stack. It may be in
 // _Grunning, but only if this is our own user G.
+// 收缩那些曾经扩容的栈空间， 节约内存
 func shrinkstack(gp *g) {
 	if gp.stack.lo == 0 {
 		throw("missing stack in shrinkstack")
@@ -1214,6 +1216,7 @@ func shrinkstack(gp *g) {
 }
 
 // freeStackSpans frees unused stack spans at the end of GC.
+// 扫描全局队列 stackpool 和暂存队列 stackLarge.free，将那些已经完全回收的 span 交还给 heap
 func freeStackSpans() {
 	// Scan stack pools for empty stack spans.
 	for order := range stackpool {

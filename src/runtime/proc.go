@@ -2538,12 +2538,14 @@ func startm(_p_ *p, spinning bool) {
 
 // Hands off P from syscall or locked M.
 // Always runs without a P, so write barriers are not allowed.
+// 释放 P，让它去执行其他任务，可能是因为系统调用 syscall 阻塞，或者 M 阻塞
 //go:nowritebarrierrec
 func handoffp(_p_ *p) {
 	// handoffp must start an M in any situation where
 	// findrunnable would return a G to run on _p_.
 
 	// if it has local work, start it straight away
+	// 如果本地队列或者全局队列有 G 任务，则直接唤醒某个 M 开始工作
 	if !runqempty(_p_) || sched.runqsize != 0 {
 		startm(_p_, false)
 		return
@@ -2592,6 +2594,7 @@ func handoffp(_p_ *p) {
 	// The scheduler lock cannot be held when calling wakeNetPoller below
 	// because wakeNetPoller may call wakep which may call startm.
 	when := nobarrierWakeTime(_p_)
+	// 没有任务就把 P 放回空闲队列
 	pidleput(_p_)
 	unlock(&sched.lock)
 
@@ -3832,6 +3835,7 @@ func reentersyscall(pc, sp uintptr) {
 	_g_.throwsplit = true
 
 	// Leave SP around for GC and traceback.
+	// 保存执行现场
 	save(pc, sp)
 	_g_.syscallsp = sp
 	_g_.syscallpc = pc
@@ -3851,6 +3855,8 @@ func reentersyscall(pc, sp uintptr) {
 		save(pc, sp)
 	}
 
+	// 确保 sysmon 运行
+	// 监控线程 sysmon 对 syscall 非常重要，因为它负责将因系统调用而长时间阻塞的 P 抢回，用于执行其他任务。否则整体性能会严重下降，甚至整个进程被冻结
 	if atomic.Load(&sched.sysmonwait) != 0 {
 		systemstack(entersyscall_sysmon)
 		save(pc, sp)
@@ -3862,6 +3868,7 @@ func reentersyscall(pc, sp uintptr) {
 		save(pc, sp)
 	}
 
+	// 设置相关状态
 	_g_.m.syscalltick = _g_.m.p.ptr().syscalltick
 	_g_.sysblocktraced = true
 	pp := _g_.m.p.ptr()
@@ -3915,6 +3922,7 @@ func entersyscall_gcwait() {
 }
 
 // The same as entersyscall(), but with a hint that the syscall is blocking.
+// 某些系统调用，明确知道会阻塞 P，比如锁，会选择 entersyscallblock 主动交出所关联的 P，不用 sysmon 监控线程处理了。
 //go:nosplit
 func entersyscallblock() {
 	_g_ := getg()
@@ -3988,6 +3996,7 @@ func exitsyscall() {
 	_g_.waitsince = 0
 	oldp := _g_.m.oldp.ptr()
 	_g_.m.oldp = 0
+	// 能绑定原有的 P 继续执行，或者有空闲的 P 复用也可以
 	if exitsyscallfast(oldp) {
 		if trace.enabled {
 			if oldp != _g_.m.p.ptr() || _g_.m.syscalltick != _g_.m.p.ptr().syscalltick {
@@ -4037,6 +4046,7 @@ func exitsyscall() {
 	_g_.m.locks--
 
 	// Call the scheduler.
+	// 如果绑定 P 失败，只能将当前的 G 任务放入待运行队列，重新调度
 	mcall(exitsyscall0)
 
 	// Scheduler returned, so we're allowed to run now.
@@ -4055,11 +4065,13 @@ func exitsyscallfast(oldp *p) bool {
 	_g_ := getg()
 
 	// Freezetheworld sets stopwait but does not retake P's.
+	// STW 状态， 就不要继续了
 	if sched.stopwait == freezeStopWait {
 		return false
 	}
 
 	// Try to re-acquire the last P.
+	// 尝试管理原来的 P
 	if oldp != nil && oldp.status == _Psyscall && atomic.Cas(&oldp.status, _Psyscall, _Pidle) {
 		// There's a cpu for us, so we can run.
 		wirep(oldp)
@@ -4068,6 +4080,7 @@ func exitsyscallfast(oldp *p) bool {
 	}
 
 	// Try to get any other idle P.
+	// 尝试获取其他空闲的 P
 	if sched.pidle != 0 {
 		var ok bool
 		systemstack(func() {
@@ -4116,11 +4129,13 @@ func exitsyscallfast_reacquired() {
 func exitsyscallfast_pidle() bool {
 	lock(&sched.lock)
 	_p_ := pidleget()
+	// 唤醒 sysmon
 	if _p_ != nil && atomic.Load(&sched.sysmonwait) != 0 {
 		atomic.Store(&sched.sysmonwait, 0)
 		notewakeup(&sched.sysmonnote)
 	}
 	unlock(&sched.lock)
+	// 重新关联 P
 	if _p_ != nil {
 		acquirep(_p_)
 		return true
@@ -4135,14 +4150,18 @@ func exitsyscallfast_pidle() bool {
 //
 //go:nowritebarrierrec
 func exitsyscall0(gp *g) {
+	// 修改状态
 	casgstatus(gp, _Gsyscall, _Grunnable)
+	// 解除和 M 的关联
 	dropg()
 	lock(&sched.lock)
 	var _p_ *p
+	// 尝试获取空闲 P
 	if schedEnabled(gp) {
 		_p_ = pidleget()
 	}
 	var locked bool
+	// 获取 P 失败，把 G 放入全局队列
 	if _p_ == nil {
 		globrunqput(gp)
 
@@ -4157,6 +4176,7 @@ func exitsyscall0(gp *g) {
 		notewakeup(&sched.sysmonnote)
 	}
 	unlock(&sched.lock)
+	// 检查是否有绑定到 P，若有就执行 G 任务
 	if _p_ != nil {
 		acquirep(_p_)
 		execute(gp, false) // Never returns.
@@ -4169,6 +4189,7 @@ func exitsyscall0(gp *g) {
 		stoplockedm()
 		execute(gp, false) // Never returns.
 	}
+	// 关联 P 失败，休眠当前的 M
 	stopm()
 	schedule() // Never returns.
 }
@@ -5382,6 +5403,7 @@ func sysmon() {
 			asmcgocall(*cgo_yield, nil)
 		}
 		// poll network if not polled for more than 10ms
+		// 获取超过 10ms 的 netpoll 结果
 		lastpoll := int64(atomic.Load64(&sched.lastpoll))
 		if netpollinited() && lastpoll != 0 && lastpoll+10*1000*1000 < now {
 			atomic.Cas64(&sched.lastpoll, uint64(lastpoll), uint64(now))
@@ -5426,12 +5448,17 @@ func sysmon() {
 		}
 		// retake P's blocked in syscalls
 		// and preempt long running G's
+		// 抢占调度
+		// 1. 抢夺 syscall 长时间阻塞的 P
+		// 2. 长时间运行的 G
 		if retake(now) != 0 {
 			idle = 0
 		} else {
 			idle++
 		}
 		// check if we need to force a GC
+		// 这段代码核心的行为就是不断地在 for 循环中，对 gcTriggerTime 和 now 变量进行比较，判断是否达到一定的时间(默认为 2 分钟)。
+		// 若达到意味着满足条件，会将 forcegc.g 放到全局队列中接受新的一轮调度，再进行对 forcegchelper 的唤醒。
 		if t := (gcTrigger{kind: gcTriggerTime, now: now}); t.test() && atomic.Load(&forcegc.idle) != 0 {
 			lock(&forcegc.lock)
 			forcegc.idle = 0
@@ -5467,6 +5494,7 @@ func retake(now int64) uint32 {
 	// We can't use a range loop over allp because we may
 	// temporarily drop the allpLock. Hence, we need to re-fetch
 	// allp each time around the loop.
+	// 遍历所有的 P
 	for i := 0; i < len(allp); i++ {
 		_p_ := allp[i]
 		if _p_ == nil {
@@ -5484,6 +5512,7 @@ func retake(now int64) uint32 {
 				pd.schedtick = uint32(t)
 				pd.schedwhen = now
 			} else if pd.schedwhen+forcePreemptNS <= now {
+				// 发出抢占调度
 				preemptone(_p_)
 				// In case of syscall, preemptone() doesn't
 				// work, because there is no M wired to P.
