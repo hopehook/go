@@ -320,8 +320,12 @@ func forcegchelper() {
 
 // Gosched yields the processor, allowing other goroutines to run. It does not
 // suspend the current goroutine, so execution resumes automatically.
+// 可被用户调用的 runtime.Gosched 将当前 G 任务暂停，重新放回全局队列，让出当前 M 去执行其他任务。
+// 我们无需对 G 做唤醒操作，因为总会被某个 M 重新拿到，并从 "断点" 恢复任务
 func Gosched() {
+	// 检查需要 timer deadline，唤醒对应的 G
 	checkTimeouts()
+	// 将当前 G 暂停，让出调度
 	mcall(gosched_m)
 }
 
@@ -349,6 +353,7 @@ func goschedguarded() {
 // Reason explains why the goroutine has been parked. It is displayed in stack
 // traces and heap dumps. Reasons should be unique and descriptive. Do not
 // re-use reasons, add new ones.
+// 与 Gosched 最大的区别在于 gopark 并没有将 G 放回待运行队列。必须主动恢复，否则该 G 任务会丢失
 func gopark(unlockf func(*g, unsafe.Pointer) bool, lock unsafe.Pointer, reason waitReason, traceEv byte, traceskip int) {
 	if reason != waitReasonSleep {
 		checkTimeouts() // timeouts may expire while two goroutines keep the scheduler busy
@@ -375,8 +380,10 @@ func goparkunlock(lock *mutex, reason waitReason, traceEv byte, traceskip int) {
 	gopark(parkunlock_c, unsafe.Pointer(lock), reason, traceEv, traceskip)
 }
 
+// 与 gopark 相对，用户恢复执行 G，G 会被放回 P.runnext，最高优先级执行
 func goready(gp *g, traceskip int) {
 	systemstack(func() {
+		// next=true，表示直接放到 P.runnext
 		ready(gp, traceskip, true)
 	})
 }
@@ -857,6 +864,7 @@ func ready(gp *g, traceskip int, next bool) {
 
 	// status is Gwaiting or Gscanwaiting, make Grunnable and put on runq
 	casgstatus(gp, _Gwaiting, _Grunnable)
+	// 会被放入 P.runnext，最高优先级执行
 	runqput(_g_.m.p.ptr(), gp, next)
 	wakep()
 	releasem(mp)
@@ -1184,12 +1192,16 @@ func stopTheWorldWithSema() {
 
 	lock(&sched.lock)
 	sched.stopwait = gomaxprocs
+	// 设置停止标志， 让 schedule 之类的调用主动休眠 M
 	atomic.Store(&sched.gcwaiting, 1)
+	// 向所有正在运行的 G 发出抢占调度
 	preemptall()
 	// stop current P
+	// 暂停当前 P
 	_g_.m.p.ptr().status = _Pgcstop // Pgcstop is only diagnostic.
 	sched.stopwait--
 	// try to retake all P's in Psyscall status
+	// 尝试暂停所有 syscall 的 P
 	for _, p := range allp {
 		s := p.status
 		if s == _Psyscall && atomic.Cas(&p.status, s, _Pgcstop) {
@@ -1202,6 +1214,7 @@ func stopTheWorldWithSema() {
 		}
 	}
 	// stop idle P's
+	// 暂停空闲的 P
 	for {
 		p := pidleget()
 		if p == nil {
@@ -1214,6 +1227,7 @@ func stopTheWorldWithSema() {
 	unlock(&sched.lock)
 
 	// wait for remaining P's to stop voluntarily
+	// 等待
 	if wait {
 		for {
 			// wait for 100us, then try to re-preempt in case of any races
@@ -1226,6 +1240,7 @@ func stopTheWorldWithSema() {
 	}
 
 	// sanity checks
+	// 检查是否 STW 成功
 	bad := ""
 	if sched.stopwait != 0 {
 		bad = "stopTheWorld: not stopped (stopwait != 0)"
@@ -1261,13 +1276,16 @@ func startTheWorldWithSema(emitTraceEvent bool) int64 {
 	}
 	lock(&sched.lock)
 
+	// 检查是否需要重新调整 P 的数量
 	procs := gomaxprocs
 	if newprocs != 0 {
 		procs = newprocs
 		newprocs = 0
 	}
 	p1 := procresize(procs)
+	// 解除停止标志
 	sched.gcwaiting = 0
+	// 唤醒 sysmon
 	if sched.sysmonwait != 0 {
 		sched.sysmonwait = 0
 		notewakeup(&sched.sysmonnote)
@@ -1276,6 +1294,7 @@ func startTheWorldWithSema(emitTraceEvent bool) int64 {
 
 	worldStarted()
 
+	// 循环所有 P，唤醒它们开始工作
 	for p1 != nil {
 		p := p1
 		p1 = p1.link.ptr()
@@ -3551,9 +3570,11 @@ func park_m(gp *g) {
 		traceGoPark(_g_.m.waittraceev, _g_.m.waittraceskip)
 	}
 
+	// 从运行态转为等待
 	casgstatus(gp, _Grunning, _Gwaiting)
 	dropg()
 
+	// 执行解锁函数，如果返回 false，则恢复执行
 	if fn := _g_.m.waitunlockf; fn != nil {
 		ok := fn(gp, _g_.m.waitlock)
 		_g_.m.waitunlockf = nil
@@ -3566,6 +3587,7 @@ func park_m(gp *g) {
 			execute(gp, true) // Schedule it back, never returns.
 		}
 	}
+	// 调度其他任务
 	schedule()
 }
 
@@ -3575,12 +3597,16 @@ func goschedImpl(gp *g) {
 		dumpgstatus(gp)
 		throw("bad g status")
 	}
+	// 从运行态转为可运行状态
 	casgstatus(gp, _Grunning, _Grunnable)
+	// 解绑当前的 M
 	dropg()
 	lock(&sched.lock)
+	// 将 G 放回全局队列
 	globrunqput(gp)
 	unlock(&sched.lock)
 
+	// 重新开始调度
 	schedule()
 }
 
@@ -5568,6 +5594,7 @@ func preemptall() bool {
 		if _p_.status != _Prunning {
 			continue
 		}
+		// 向 P 发出抢占调度
 		if preemptone(_p_) {
 			res = true
 		}

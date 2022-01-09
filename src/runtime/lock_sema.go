@@ -162,6 +162,7 @@ func notewakeup(n *note) {
 	}
 }
 
+// 让线程休眠，不支持 futex 的平台使用 semaphore 信号量实现
 func notesleep(n *note) {
 	gp := getg()
 	if gp != gp.m.g0 {

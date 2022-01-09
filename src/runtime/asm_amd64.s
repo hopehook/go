@@ -401,6 +401,8 @@ TEXT gogo<>(SB), NOSPLIT, $0
 // Switch to m->g0's stack, call fn(g).
 // Fn must never return. It should gogo(&g->sched)
 // to keep running g.
+// 实现 "断点恢复" 的关键由 mcall 实现，它将当前执行状态，包括 SP、PC 等值保存到 G.sched 区域
+// 当 execute 的 gogo 再次执行该任务时，自然可以从中恢复任务，因为执行栈是自带的，不用担心丢失
 TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT, $0-8
 	MOVQ	AX, DX	// DX = fn
 

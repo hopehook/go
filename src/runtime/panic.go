@@ -445,6 +445,9 @@ func deferreturn() {
 // without func main returning. Since func main has not returned,
 // the program continues execution of other goroutines.
 // If all other goroutines exit, the program crashes.
+
+// 用户可以调用 runtime.Goexit 立即终止 G 的运行，不管当前处于调用堆栈的哪个层次。终止前，会确保所有 G._defer 被执行
+// 如果是在 main goroutine 里调用 runtime.Goexit，它会等待其他 goroutine 结束后，才崩溃
 func Goexit() {
 	// Run all deferred functions for the current goroutine.
 	// This code is similar to gopanic, see that implementation

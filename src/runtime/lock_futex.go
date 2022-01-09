@@ -130,11 +130,13 @@ func unlock2(l *mutex) {
 	}
 }
 
+// 重置休眠条件
 // One-time notifications.
 func noteclear(n *note) {
 	n.key = 0
 }
 
+// 唤醒线程 M
 func notewakeup(n *note) {
 	old := atomic.Xchg(key32(&n.key), 1)
 	if old != 0 {
@@ -144,6 +146,9 @@ func notewakeup(n *note) {
 	futexwakeup(key32(&n.key), 1)
 }
 
+// notesleep 相比 gosched、gopark，既不会让出 M，也不会让 G 重回任务队列。
+// 它直接让线程 M 休眠，直到被唤醒，更适合 stopm，gcMark 这类近似自旋的场景
+// 在 linux、freebsd 平台， 是基于系统的 futex 的高性能实现
 func notesleep(n *note) {
 	gp := getg()
 	if gp != gp.m.g0 {
