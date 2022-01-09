@@ -388,6 +388,7 @@ func goready(gp *g, traceskip int) {
 	})
 }
 
+// 获取 sudog，先从本地复用队列 P.sudogcache 中获取，再从全局复用队列 sched.sudogcache 获取
 //go:nosplit
 func acquireSudog() *sudog {
 	// Delicate dance: the semaphore implementation calls

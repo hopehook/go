@@ -31,16 +31,17 @@ const (
 )
 
 type hchan struct {
-	qcount   uint           // total data in the queue
-	dataqsiz uint           // size of the circular queue
-	buf      unsafe.Pointer // points to an array of dataqsiz elements
-	elemsize uint16
-	closed   uint32
-	elemtype *_type // element type
-	sendx    uint   // send index
-	recvx    uint   // receive index
-	recvq    waitq  // list of recv waiters
-	sendq    waitq  // list of send waiters
+	qcount   uint           // total data in the queue    // 缓冲槽内实际数据项的数量
+	dataqsiz uint           // size of the circular queue // 缓冲槽大小
+	buf      unsafe.Pointer // points to an array of dataqsiz elements // 缓冲槽的指针
+	elemsize uint16         // 数据项大小
+	closed   uint32         // channel 是否关闭了
+	elemtype *_type // element type  // 数据项类型
+
+	sendx    uint   // send index            // 缓冲槽发送位置索引
+	recvx    uint   // receive index         // 缓冲槽接收位置索引
+	recvq    waitq  // list of recv waiters  // 等待接收队列
+	sendq    waitq  // list of send waiters  // 等待发送队列
 
 	// lock protects all fields in hchan, as well as several
 	// fields in sudogs blocked on this channel.
@@ -73,6 +74,7 @@ func makechan(t *chantype, size int) *hchan {
 	elem := t.elem
 
 	// compiler checks this but be safe.
+	// 数据项的大小不能超过 64 KB
 	if elem.size >= 1<<16 {
 		throw("makechan: invalid channel element type")
 	}
@@ -81,6 +83,7 @@ func makechan(t *chantype, size int) *hchan {
 	}
 
 	mem, overflow := math.MulUintptr(elem.size, uintptr(size))
+	// 缓冲槽大小检查
 	if overflow || mem > maxAlloc-hchanSize || size < 0 {
 		panic(plainError("makechan: size out of range"))
 	}
@@ -89,6 +92,7 @@ func makechan(t *chantype, size int) *hchan {
 	// buf points into the same allocation, elemtype is persistent.
 	// SudoG's are referenced from their owning thread so they can't be collected.
 	// TODO(dvyukov,rlh): Rethink when collector can move allocated objects.
+	// 受到垃圾回收器限制，指针类型缓冲槽必须单独分配内存
 	var c *hchan
 	switch {
 	case mem == 0:
@@ -107,6 +111,7 @@ func makechan(t *chantype, size int) *hchan {
 		c.buf = mallocgc(mem, elem, true)
 	}
 
+	// 设置 channel 的其他属性
 	c.elemsize = uint16(elem.size)
 	c.elemtype = elem
 	c.dataqsiz = uint(size)
@@ -156,6 +161,7 @@ func chansend1(c *hchan, elem unsafe.Pointer) {
  * been closed.  it is easiest to loop and re-run
  * the operation; we'll see that it's now closed.
  */
+// 参数 ep 是数据项的指针
 func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	if c == nil {
 		if !block {
@@ -205,20 +211,25 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		panic(plainError("send on closed channel"))
 	}
 
+	// 从等待队列获取接收者，
 	if sg := c.recvq.dequeue(); sg != nil {
 		// Found a waiting receiver. We pass the value we want to send
 		// directly to the receiver, bypassing the channel buffer (if any).
+		// 直接用 memmove 将数据项复制给接收者
 		send(c, sg, ep, func() { unlock(&c.lock) }, 3)
 		return true
 	}
 
+	// 缓冲槽还有空位，可以放入数据项，将数据项复制到缓冲槽内
 	if c.qcount < c.dataqsiz {
 		// Space is available in the channel buffer. Enqueue the element to send.
 		qp := chanbuf(c, c.sendx)
 		if raceenabled {
 			racenotify(c, c.sendx, nil)
 		}
+		// 复制数据项到缓冲槽
 		typedmemmove(c.elemtype, qp, ep)
+		// 调整缓冲槽发送位置索引，更新数据项数量
 		c.sendx++
 		if c.sendx == c.dataqsiz {
 			c.sendx = 0
@@ -234,6 +245,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	}
 
 	// Block on the channel. Some receiver will complete our operation for us.
+	// 如果没有接收者，缓冲槽已经满了，就把 G 封装成 sudog，阻塞在 channel 上，等待接收者 G 来唤醒
 	gp := getg()
 	mysg := acquireSudog()
 	mysg.releasetime = 0
@@ -249,6 +261,8 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	mysg.c = c
 	gp.waiting = mysg
 	gp.param = nil
+
+	// 将发送方 sudog 放入等待队列， 休眠， 等待接收者唤醒
 	c.sendq.enqueue(mysg)
 	// Signal to anyone trying to shrink our stack that we're about
 	// to park on a channel. The window between when this G's status
@@ -263,6 +277,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	KeepAlive(ep)
 
 	// someone woke us up.
+	// 被唤醒了，此时数据已经被接收者复制，无需再处理
 	if mysg != gp.waiting {
 		throw("G waiting list is corrupted")
 	}
@@ -274,7 +289,9 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		blockevent(mysg.releasetime-t0, 2)
 	}
 	mysg.c = nil
+	// 将 sudog 放回复用缓存队列
 	releaseSudog(mysg)
+	// 检查是否被 closechan 唤醒
 	if closed {
 		if c.closed == 0 {
 			throw("chansend: spurious wakeup")
@@ -313,11 +330,13 @@ func send(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
 	}
 	gp := sg.g
 	unlockf()
+	// 唤醒检查标志， 表明是由发送者唤醒
 	gp.param = unsafe.Pointer(sg)
 	sg.success = true
 	if sg.releasetime != 0 {
 		sg.releasetime = cputicks()
 	}
+	// 唤醒 接收者，解除其阻塞
 	goready(gp, skip+1)
 }
 
@@ -519,25 +538,30 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		return true, false
 	}
 
+	// 从等待队列获取发送者
 	if sg := c.sendq.dequeue(); sg != nil {
 		// Found a waiting sender. If buffer is size 0, receive value
 		// directly from sender. Otherwise, receive from head of queue
 		// and add sender's value to the tail of the queue (both map to
 		// the same buffer slot because the queue is full).
+		// 直接从发送者复制数据，唤醒发送者后， 发送者直接结束掉
 		recv(c, sg, ep, func() { unlock(&c.lock) }, 3)
 		return true, true
 	}
 
+	// 缓冲槽内还有数据项，直接从槽内获取数据
 	if c.qcount > 0 {
 		// Receive directly from queue
 		qp := chanbuf(c, c.recvx)
 		if raceenabled {
 			racenotify(c, c.recvx, nil)
 		}
+		// 复制数据项
 		if ep != nil {
 			typedmemmove(c.elemtype, ep, qp)
 		}
 		typedmemclr(c.elemtype, qp)
+		// 更新接收位置索引，减少数据项数量
 		c.recvx++
 		if c.recvx == c.dataqsiz {
 			c.recvx = 0
@@ -553,6 +577,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	}
 
 	// no sender available: block on this channel.
+	// 如果没有发送者，缓冲槽为空，将当前 G 封装成 sudog 阻塞在 channel 上， 进入休眠， 等待将来的发送者唤醒
 	gp := getg()
 	mysg := acquireSudog()
 	mysg.releasetime = 0
@@ -568,6 +593,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	mysg.isSelect = false
 	mysg.c = c
 	gp.param = nil
+	// 将 sudog 放入接收者等待队列，休眠，等待发送者唤醒
 	c.recvq.enqueue(mysg)
 	// Signal to anyone trying to shrink our stack that we're about
 	// to park on a channel. The window between when this G's status
@@ -577,6 +603,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	gopark(chanparkcommit, unsafe.Pointer(&c.lock), waitReasonChanReceive, traceEvGoBlockRecv, 2)
 
 	// someone woke us up
+	// 被唤醒了，此时数据已经被发送者复制过来了，无需再做处理
 	if mysg != gp.waiting {
 		throw("G waiting list is corrupted")
 	}
@@ -588,6 +615,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 	success := mysg.success
 	gp.param = nil
 	mysg.c = nil
+	// 将 sudog 放回复用缓存队列
 	releaseSudog(mysg)
 	return true, success
 }
@@ -644,6 +672,7 @@ func recv(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
 	if sg.releasetime != 0 {
 		sg.releasetime = cputicks()
 	}
+	// 唤醒 发送者，接触其阻塞
 	goready(gp, skip+1)
 }
 

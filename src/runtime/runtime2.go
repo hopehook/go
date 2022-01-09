@@ -341,6 +341,9 @@ type gobuf struct {
 //
 // sudogs are allocated from a special pool. Use acquireSudog and
 // releaseSudog to allocate and free them.
+
+// channel 用封装的 sudog 代替接收双方的 g，因为要携带数据项，存储相关状态
+// sudog 实现了二级缓存复用链表 P.sudogcache、schedt.sudogcache
 type sudog struct {
 	// The following fields are protected by the hchan.lock of the
 	// channel this sudog is blocking on. shrinkstack depends on
