@@ -6368,6 +6368,7 @@ func procPin() int {
 	_g_ := getg()
 	mp := _g_.m
 
+	// procPin()这里mp.locks加锁，禁止其他g抢占p。
 	mp.locks++
 	return int(mp.p.ptr().id)
 }
