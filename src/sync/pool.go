@@ -45,7 +45,7 @@ import (
 // Pool 用 local 和 localSize 维护一个动态 poolLocal 数组。
 // 无论是 Get，还是 Put 操作都会通过 pin 来返回与当前 P 绑定的 poolLocal 对象
 type Pool struct {
-	noCopy noCopy  // go vet检测使用
+	noCopy noCopy  // go vet检测使用，防止Pool被拷贝，因为Pool 在Golang是全局唯一的
 
 	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal // [P]poolLocal 数组指针
 	localSize uintptr        // size of the local array  // 数组内 poolLocal 数量
@@ -169,10 +169,13 @@ func (p *Pool) Get() any {
 
 func (p *Pool) getSlow(pid int) any {
 	// See the comment in pin regarding ordering of the loads.
+	// 获取poolLocal数组的大小
 	size := runtime_LoadAcquintptr(&p.localSize) // load-acquire
 	locals := p.local                            // load-consume
+
 	// Try to steal one element from other procs.
 	for i := 0; i < int(size); i++ {
+		// 获取一个poolLocal，注意这里是从当前的local的位置开始获取的，目的是防止取到自身
 		l := indexLocal(locals, (pid+i+1)%int(size))
 		if x, _ := l.shared.popTail(); x != nil {
 			return x
@@ -227,6 +230,7 @@ func (p *Pool) pin() (*poolLocal, int) {
 	return p.pinSlow()
 }
 
+// 加锁重建 Pool，并添加到 allPools
 func (p *Pool) pinSlow() (*poolLocal, int) {
 	// Retry under the mutex.
 	// Can not lock the mutex while pinned.
@@ -238,7 +242,7 @@ func (p *Pool) pinSlow() (*poolLocal, int) {
 	// 获取当前 pid
 	pid := runtime_procPin()
 	// poolCleanup won't be called while we are pinned.
-	// 再次检查是否符合条件，直接返回
+	// 再次检查是否符合条件，有可能中途已被其他线程调用
 	s := p.localSize
 	l := p.local
 	if uintptr(pid) < s {
@@ -252,6 +256,8 @@ func (p *Pool) pinSlow() (*poolLocal, int) {
 	// 根据 P 数量创建 slice
 	size := runtime.GOMAXPROCS(0)
 	local := make([]poolLocal, size)
+	// 将底层数组起始指针保存到 Pool.local，并设置 P.localSize
+	// 这里需要关注的是：如果GOMAXPROCS在GC间发生变化，则会重新分配的时候，直接丢弃老的，等待GC回收。
 	atomic.StorePointer(&p.local, unsafe.Pointer(&local[0])) // store-release
 	runtime_StoreReluintptr(&p.localSize, uintptr(size))     // store-release
 	// 返回本次需要的 poolLocal
@@ -259,6 +265,7 @@ func (p *Pool) pinSlow() (*poolLocal, int) {
 }
 
 // 此时是 STW 状态， 所以无需加锁操作
+// 清理函数也很粗暴，直接遍历全局维护的allPools将private和shared置为nil
 func poolCleanup() {
 	// This function is called with the world stopped, at the beginning of a garbage collection.
 	// It must not allocate and probably should not call any runtime functions.
@@ -273,6 +280,7 @@ func poolCleanup() {
 	}
 
 	// Move primary cache to victim cache.
+	// 遍历allPools
 	for _, p := range allPools {
 		p.victim = p.local
 		p.victimSize = p.localSize
@@ -298,6 +306,8 @@ var (
 	oldPools []*Pool
 )
 
+// 注册清理函数，随着runtime进行的，也就是每次GC都会跑一下，清理掉 Pool
+// 所以 Pool 不是永久保存的，生命周期就是两次 GC 间隔时间内
 func init() {
 	runtime_registerPoolCleanup(poolCleanup)
 }
