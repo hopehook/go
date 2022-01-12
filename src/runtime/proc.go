@@ -3577,6 +3577,7 @@ func park_m(gp *g) {
 
 	// 从运行态转为等待
 	casgstatus(gp, _Grunning, _Gwaiting)
+	// 解绑 G 和 M
 	dropg()
 
 	// 执行解锁函数，如果返回 false，则恢复执行
@@ -3748,7 +3749,7 @@ func goexit0(gp *g) {
 		atomic.Xaddint64(&gcController.bgScanCredit, scanCredit)
 		gp.gcAssistBytes = 0
 	}
-
+	// 解绑 G 和 M
 	dropg()
 
 	if GOARCH == "wasm" { // no threads yet on wasm
