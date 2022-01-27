@@ -34,12 +34,12 @@ func (s *_TypeSet) IsAll() bool {
 func (s *_TypeSet) IsMethodSet() bool { return !s.comparable && s.terms.isAll() }
 
 // IsComparable reports whether each type in the set is comparable.
-func (s *_TypeSet) IsComparable() bool {
+func (s *_TypeSet) IsComparable(seen map[Type]bool) bool {
 	if s.terms.isAll() {
 		return s.comparable
 	}
 	return s.is(func(t *term) bool {
-		return t != nil && Comparable(t.typ)
+		return t != nil && comparable(t.typ, seen)
 	})
 }
 
@@ -135,7 +135,7 @@ func (s *_TypeSet) is(f func(*term) bool) bool {
 
 // underIs calls f with the underlying types of the specific type terms
 // of s and reports whether all calls to f returned true. If there are
-// no specific terms, is returns the result of f(nil).
+// no specific terms, underIs returns the result of f(nil).
 func (s *_TypeSet) underIs(f func(Type) bool) bool {
 	if !s.hasTerms() {
 		return f(nil)

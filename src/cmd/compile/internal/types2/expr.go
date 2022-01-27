@@ -504,8 +504,11 @@ func (check *Checker) invalidConversion(code errorCode, x *operand, target Type)
 // Also, if x is a constant, it must be representable as a value of typ,
 // and if x is the (formerly untyped) lhs operand of a non-constant
 // shift, it must be an integer value.
-//
 func (check *Checker) updateExprType(x syntax.Expr, typ Type, final bool) {
+	check.updateExprType0(nil, x, typ, final)
+}
+
+func (check *Checker) updateExprType0(parent, x syntax.Expr, typ Type, final bool) {
 	old, found := check.untyped[x]
 	if !found {
 		return // nothing to do
@@ -548,7 +551,7 @@ func (check *Checker) updateExprType(x syntax.Expr, typ Type, final bool) {
 		// No operands to take care of.
 
 	case *syntax.ParenExpr:
-		check.updateExprType(x.X, typ, final)
+		check.updateExprType0(x, x.X, typ, final)
 
 	// case *syntax.UnaryExpr:
 	// 	// If x is a constant, the operands were constants.
@@ -559,7 +562,7 @@ func (check *Checker) updateExprType(x syntax.Expr, typ Type, final bool) {
 	// 	if old.val != nil {
 	// 		break
 	// 	}
-	// 	check.updateExprType(x.X, typ, final)
+	// 	check.updateExprType0(x, x.X, typ, final)
 
 	case *syntax.Operation:
 		if x.Y == nil {
@@ -580,7 +583,7 @@ func (check *Checker) updateExprType(x syntax.Expr, typ Type, final bool) {
 			if old.val != nil {
 				break
 			}
-			check.updateExprType(x.X, typ, final)
+			check.updateExprType0(x, x.X, typ, final)
 			break
 		}
 
@@ -594,11 +597,11 @@ func (check *Checker) updateExprType(x syntax.Expr, typ Type, final bool) {
 		} else if isShift(x.Op) {
 			// The result type depends only on lhs operand.
 			// The rhs type was updated when checking the shift.
-			check.updateExprType(x.X, typ, final)
+			check.updateExprType0(x, x.X, typ, final)
 		} else {
 			// The operand types match the result type.
-			check.updateExprType(x.X, typ, final)
-			check.updateExprType(x.Y, typ, final)
+			check.updateExprType0(x, x.X, typ, final)
+			check.updateExprType0(x, x.Y, typ, final)
 		}
 
 	default:
@@ -622,7 +625,11 @@ func (check *Checker) updateExprType(x syntax.Expr, typ Type, final bool) {
 		// We already know from the shift check that it is representable
 		// as an integer if it is a constant.
 		if !allInteger(typ) {
-			check.errorf(x, invalidOp+"shifted operand %s (type %s) must be integer", x, typ)
+			if check.conf.CompilerErrorMessages {
+				check.errorf(x, invalidOp+"%s (shift of type %s)", parent, typ)
+			} else {
+				check.errorf(x, invalidOp+"shifted operand %s (type %s) must be integer", x, typ)
+			}
 			return
 		}
 		// Even if we have an integer, if the value is a constant we
@@ -770,10 +777,12 @@ func (check *Checker) comparison(x, y *operand, op syntax.Operator) {
 	xok, _ := x.assignableTo(check, y.typ, nil)
 	yok, _ := y.assignableTo(check, x.typ, nil)
 	if xok || yok {
+		equality := false
 		defined := false
 		switch op {
 		case syntax.Eql, syntax.Neq:
 			// spec: "The equality operators == and != apply to operands that are comparable."
+			equality = true
 			defined = Comparable(x.typ) && Comparable(y.typ) || x.isNil() && hasNil(y.typ) || y.isNil() && hasNil(x.typ)
 		case syntax.Lss, syntax.Leq, syntax.Gtr, syntax.Geq:
 			// spec: The ordering operators <, <=, >, and >= apply to operands that are ordered."
@@ -782,11 +791,19 @@ func (check *Checker) comparison(x, y *operand, op syntax.Operator) {
 			unreachable()
 		}
 		if !defined {
-			typ := x.typ
-			if x.isNil() {
-				typ = y.typ
+			if equality && (isTypeParam(x.typ) || isTypeParam(y.typ)) {
+				typ := x.typ
+				if isTypeParam(y.typ) {
+					typ = y.typ
+				}
+				err = check.sprintf("%s is not comparable", typ)
+			} else {
+				typ := x.typ
+				if x.isNil() {
+					typ = y.typ
+				}
+				err = check.sprintf("operator %s not defined on %s", op, typ)
 			}
-			err = check.sprintf("operator %s not defined on %s", op, typ)
 		}
 	} else {
 		err = check.sprintf("mismatched types %s and %s", x.typ, y.typ)

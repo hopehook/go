@@ -108,12 +108,6 @@ Do not send CLs removing the interior tags from such phrases.
       interface type with a non-empty method set. Whether this will
       ever be permitted is unclear at present.
     </li>
-    <li><!-- https://golang.org/issue/50481 -->
-      A generic type or function currently may declare at most one blank (<code>_</code>)
-      type parameter name. Note that it is always possible to use an arbitrary new
-      (unused) identifier in place of a blank type parameter name.
-      We plan to remove this restriction in Go 1.19.
-    </li>
   </ul>
 </p>
 
@@ -149,7 +143,7 @@ Do not send CLs removing the interior tags from such phrases.
 <h3 id="amd64">AMD64</h3>
 
 <p><!-- CL 349595 -->
-  Go 1.18 introduces the new <code>GOAMD64</code> environment variable, which selects
+  Go 1.18 introduces the new <code>GOAMD64</code> environment variable, which selects at compile time
   a mininum target version of the AMD64 architecture. Allowed values are <code>v1</code>,
   <code>v2</code>, <code>v3</code>, or <code>v4</code>. Each higher level requires,
   and takes advantage of, additional processor features. A detailed
@@ -253,10 +247,10 @@ Do not send CLs removing the interior tags from such phrases.
   including build and tool tags (set with <code>-tags</code>), compiler,
   assembler, and linker flags (like <code>-gcflags</code>), whether cgo was
   enabled, and if it was, the values of the cgo environment variables
-  (like <code>CGO_CFLAGS</code>). This information may be omitted using the
-  flag <code>-buildinfo=false</code>. Both VCS and build information may be
-  read together with module information using <code>go</code>
-  <code>version</code> <code>-m</code> <code>file</code> or
+  (like <code>CGO_CFLAGS</code>).
+  Both VCS and build information may be read together with module
+  information using
+  <code>go</code> <code>version</code> <code>-m</code> <code>file</code> or
   <code>runtime/debug.ReadBuildInfo</code> (for the currently running binary)
   or the new <a href="#debug/buildinfo"><code>debug/buildinfo</code></a>
   package.
@@ -298,6 +292,16 @@ Do not send CLs removing the interior tags from such phrases.
   now support an <code>-asan</code> flag that enables interoperation
   with C (or C++) code compiled with the address sanitizer (C compiler
   option <code>-fsanitize=address</code>).
+</p>
+
+<p><!-- https://golang.org/issue/47738 -->
+  The <code>go</code> <code>mod</code> <code>tidy</code> command now retains
+  additional checksums in the <code>go.sum</code> file for modules whose source
+  code is needed to verify that each imported package is provided by only one
+  module in the <a href="/ref/mod#glos-build-list">build list</a>. Because this
+  condition is rare and failure to apply it results in a build error, this
+  change is <em>not</em> conditioned on the <code>go</code> version in the main
+  module's <code>go.mod</code> file.
 </p>
 
 <p><!-- https://golang.org/issue/45713 -->
@@ -567,7 +571,7 @@ Do not send CLs removing the interior tags from such phrases.
 
     <p><!-- CL 323318, CL 332771 -->
       <a href="/pkg/bytes/#Trim"><code>Trim</code></a>, <a href="/pkg/bytes/#TrimLeft"><code>TrimLeft</code></a>,
-      and <a href="/pkg/bytes/#TrimRight"><code>TrimRight</code></a> are now allocation free and, especially for 
+      and <a href="/pkg/bytes/#TrimRight"><code>TrimRight</code></a> are now allocation free and, especially for
       small ASCII cutsets, up to 10 times faster.
     </p>
 
@@ -755,6 +759,14 @@ Do not send CLs removing the interior tags from such phrases.
       new <code>{{continue}}</code> command will immediately start the
       next loop iteration.
     </p>
+
+    <p><!-- CL 321490 -->
+      The <code>and</code> function no longer always evaluates all arguments; it
+      stops evaluating arguments after the first argument that evaluates to
+      false.  Similarly, the <code>or</code> function now stops evaluating
+      arguments after the first argument that evaluates to true. This makes a
+      difference if any of the arguments is a function call.
+    </p>
   </dd>
 </dl><!-- html/template -->
 
@@ -934,7 +946,7 @@ Do not send CLs removing the interior tags from such phrases.
 
     <p><!-- CL 323318, CL 332771 -->
       <a href="/pkg/strings/#Trim"><code>Trim</code></a>, <a href="/pkg/strings/#TrimLeft"><code>TrimLeft</code></a>,
-      and <a href="/pkg/strings/#TrimRight"><code>TrimRight</code></a> are now allocation free and, especially for 
+      and <a href="/pkg/strings/#TrimRight"><code>TrimRight</code></a> are now allocation free and, especially for
       small ASCII cutsets, up to 10 times faster.
     </p>
 

@@ -7,7 +7,6 @@
 package types
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -20,7 +19,7 @@ import (
 // in T and returns the corresponding *Var or *Func, an index sequence, and a
 // bool indicating if there were any pointer indirections on the path to the
 // field or method. If addressable is set, T is the type of an addressable
-// variable (only matters for method lookups).
+// variable (only matters for method lookups). T must not be nil.
 //
 // The last index entry is the field or method index in the (possibly embedded)
 // type where the entry was found, either:
@@ -43,6 +42,10 @@ import (
 //	the method's formal receiver base type, nor was the receiver addressable.
 //
 func LookupFieldOrMethod(T Type, addressable bool, pkg *Package, name string) (obj Object, index []int, indirect bool) {
+	if T == nil {
+		panic("LookupFieldOrMethod on nil type")
+	}
+
 	// Methods cannot be associated to a named pointer type.
 	// (spec: "The type denoted by T is called the receiver base type;
 	// it must not be a pointer or interface type and it must be declared
@@ -139,7 +142,7 @@ func lookupFieldOrMethod(T Type, addressable bool, pkg *Package, name string) (o
 
 				// look for a matching attached method
 				named.resolve(nil)
-				if i, m := lookupMethod(named.methods, pkg, name); m != nil {
+				if i, m := named.lookupMethod(pkg, name); m != nil {
 					// potential match
 					// caution: method may not have a proper signature yet
 					index = concat(e.index, i)
@@ -317,14 +320,7 @@ func (check *Checker) missingMethod(V Type, T *Interface, static bool) (method, 
 				panic("method with type parameters")
 			}
 
-			// If the methods have type parameters we don't care whether they
-			// are the same or not, as long as they match up. Use unification
-			// to see if they can be made to match.
-			// TODO(gri) is this always correct? what about type bounds?
-			// (Alternative is to rename/subst type parameters and compare.)
-			u := newUnifier(true)
-			u.x.init(ftyp.TypeParams().list())
-			if !u.unify(ftyp, mtyp) {
+			if !Identical(ftyp, mtyp) {
 				return m, f
 			}
 		}
@@ -372,14 +368,7 @@ func (check *Checker) missingMethod(V Type, T *Interface, static bool) (method, 
 			panic("method with type parameters")
 		}
 
-		// If the methods have type parameters we don't care whether they
-		// are the same or not, as long as they match up. Use unification
-		// to see if they can be made to match.
-		// TODO(gri) is this always correct? what about type bounds?
-		// (Alternative is to rename/subst type parameters and compare.)
-		u := newUnifier(true)
-		u.x.init(ftyp.RecvTypeParams().list())
-		if !u.unify(ftyp, mtyp) {
+		if !Identical(ftyp, mtyp) {
 			return m, f
 		}
 	}
@@ -401,20 +390,21 @@ func (check *Checker) missingMethodReason(V, T Type, m, wrongType *Func) string 
 		mname = "method " + m.Name()
 	}
 	if wrongType != nil {
+		pos := check.fset.Position(wrongType.Pos())
 		if Identical(m.typ, wrongType.typ) {
 			if m.Name() == wrongType.Name() {
-				r = fmt.Sprintf("(%s has pointer receiver)", mname)
+				r = check.sprintf("(%s has pointer receiver) at %s", mname, pos)
 			} else {
-				r = fmt.Sprintf("(missing %s)\n\t\thave %s^^%s\n\t\twant %s^^%s",
-					mname, wrongType.Name(), wrongType.typ, m.Name(), m.typ)
+				r = check.sprintf("(missing %s)\n\t\thave %s^^%s at %s\n\t\twant %s^^%s",
+					mname, wrongType.Name(), wrongType.typ, pos, m.Name(), m.typ)
 			}
 		} else {
 			if compilerErrorMessages {
-				r = fmt.Sprintf("(wrong type for %s)\n\t\thave %s^^%s\n\t\twant %s^^%s",
-					mname, wrongType.Name(), wrongType.typ, m.Name(), m.typ)
+				r = check.sprintf("(wrong type for %s)\n\t\thave %s^^%s at %s\n\t\twant %s^^%s",
+					mname, wrongType.Name(), wrongType.typ, pos, m.Name(), m.typ)
 			} else {
-				r = fmt.Sprintf("(wrong type for %s: have %s, want %s)",
-					mname, wrongType.typ, m.typ)
+				r = check.sprintf("(wrong type for %s)\n\thave %s at %s\nwant %s",
+					mname, wrongType.typ, pos, m.typ)
 			}
 		}
 		// This is a hack to print the function type without the leading
@@ -422,22 +412,30 @@ func (check *Checker) missingMethodReason(V, T Type, m, wrongType *Func) string 
 		// an extra formatting option for types2.Type that doesn't print out
 		// 'func'.
 		r = strings.Replace(r, "^^func", "", -1)
-	} else if IsInterface(T) && !isTypeParam(T) {
+	} else if IsInterface(T) {
 		if isInterfacePtr(V) {
-			r = fmt.Sprintf("(%s is pointer to interface, not interface)", V)
+			r = "(" + check.interfacePtrError(V) + ")"
 		}
-	} else if isInterfacePtr(T) && !isTypeParam(T) {
-		r = fmt.Sprintf("(%s is pointer to interface, not interface)", T)
+	} else if isInterfacePtr(T) {
+		r = "(" + check.interfacePtrError(T) + ")"
 	}
 	if r == "" {
-		r = fmt.Sprintf("(missing %s)", mname)
+		r = check.sprintf("(missing %s)", mname)
 	}
 	return r
 }
 
 func isInterfacePtr(T Type) bool {
 	p, _ := under(T).(*Pointer)
-	return p != nil && IsInterface(p.base) && !isTypeParam(T)
+	return p != nil && IsInterface(p.base)
+}
+
+func (check *Checker) interfacePtrError(T Type) string {
+	assert(isInterfacePtr(T))
+	if p, _ := under(T).(*Pointer); isTypeParam(p.base) {
+		return check.sprintf("type %s is pointer to type parameter, not type parameter", T)
+	}
+	return check.sprintf("type %s is pointer to interface, not interface", T)
 }
 
 // assertableTo reports whether a value of type V can be asserted to have type T.

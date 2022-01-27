@@ -173,6 +173,8 @@ func AddImplicitDots(n *ir.SelectorExpr) *ir.SelectorExpr {
 	return n
 }
 
+// CalcMethods calculates all the methods (including embedding) of a non-interface
+// type t.
 func CalcMethods(t *types.Type) {
 	if t == nil || t.AllMethods().Len() != 0 {
 		return
@@ -976,7 +978,9 @@ func makeInstName1(name string, targs []*types.Type, hasBrackets bool) string {
 // function that helps implement a method of an instantiated type). For method nodes
 // on shape types, we prepend "nofunc.", because method nodes for shape types will
 // have no body, and we want to avoid a name conflict with the shape-based function
-// that helps implement the same method for fully-instantiated types.
+// that helps implement the same method for fully-instantiated types. Function names
+// are also created at the end of (*Tsubster).typ1, so we append "nofunc" there as
+// well, as needed.
 func MakeFuncInstSym(gf *types.Sym, targs []*types.Type, isMethodNode, hasBrackets bool) *types.Sym {
 	nm := makeInstName1(gf.Name, targs, hasBrackets)
 	if targs[0].HasShape() && isMethodNode {
@@ -1273,7 +1277,25 @@ func (ts *Tsubster) typ1(t *types.Type) *types.Type {
 		for i, f := range t.Methods().Slice() {
 			t2 := ts.typ1(f.Type)
 			oldsym := f.Nname.Sym()
-			newsym := MakeFuncInstSym(oldsym, ts.Targs, true, true)
+
+			// Use the name of the substituted receiver to create the
+			// method name, since the receiver name may have many levels
+			// of nesting (brackets) with type names to be substituted.
+			recvType := t2.Recv().Type
+			var nm string
+			if recvType.IsPtr() {
+				recvType = recvType.Elem()
+				nm = "(*" + recvType.Sym().Name + ")." + f.Sym.Name
+			} else {
+				nm = recvType.Sym().Name + "." + f.Sym.Name
+			}
+			if recvType.RParams()[0].HasShape() {
+				// We add "nofunc" to methods of shape type to avoid
+				// conflict with the name of the shape-based helper
+				// function. See header comment of MakeFuncInstSym.
+				nm = "nofunc." + nm
+			}
+			newsym := oldsym.Pkg.Lookup(nm)
 			var nname *ir.Name
 			if newsym.Def != nil {
 				nname = newsym.Def.(*ir.Name)
@@ -1410,11 +1432,15 @@ func genericTypeName(sym *types.Sym) string {
 // For now, we only consider two types to have the same shape, if they have exactly
 // the same underlying type or they are both pointer types.
 //
+//  tparam is the associated typeparam. If there is a structural type for
+//  the associated type param (not common), then a pointer type t is mapped to its
+//  underlying type, rather than being merged with other pointers.
+//
 //  Shape types are also distinguished by the index of the type in a type param/arg
 //  list. We need to do this so we can distinguish and substitute properly for two
 //  type params in the same function that have the same shape for a particular
 //  instantiation.
-func Shapify(t *types.Type, index int) *types.Type {
+func Shapify(t *types.Type, index int, tparam *types.Type) *types.Type {
 	assert(!t.IsShape())
 	// Map all types with the same underlying type to the same shape.
 	u := t.Underlying()
@@ -1423,7 +1449,8 @@ func Shapify(t *types.Type, index int) *types.Type {
 	// TODO: Make unsafe.Pointer the same shape as normal pointers.
 	// Note: pointers to arrays are special because of slice-to-array-pointer
 	// conversions. See issue 49295.
-	if u.Kind() == types.TPTR && u.Elem().Kind() != types.TARRAY {
+	if u.Kind() == types.TPTR && u.Elem().Kind() != types.TARRAY &&
+		tparam.Bound().StructuralType() == nil {
 		u = types.Types[types.TUINT8].PtrTo()
 	}
 
