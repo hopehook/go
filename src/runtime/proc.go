@@ -2596,8 +2596,8 @@ func startm(_p_ *p, spinning bool) {
 
 // Hands off P from syscall or locked M.
 // Always runs without a P, so write barriers are not allowed.
-// 释放 P，让它去执行其他任务，可能是因为系统调用 syscall 阻塞，或者 M 阻塞
 //go:nowritebarrierrec
+// 释放 P，让它去执行其他任务，可能是因为系统调用 syscall 阻塞，或者 M 阻塞
 func handoffp(_p_ *p) {
 	// handoffp must start an M in any situation where
 	// findrunnable would return a G to run on _p_.
@@ -5422,6 +5422,7 @@ var needSysmonWorkaround bool = false
 func sysmon() {
 	lock(&sched.lock)
 	sched.nmsys++
+	// 判断程序是否死锁
 	checkdead()
 	unlock(&sched.lock)
 
@@ -5442,6 +5443,7 @@ func sysmon() {
 		if delay > 10*1000 { // up to 10ms
 			delay = 10 * 1000
 		}
+		// 休眠 delay us
 		usleep(delay)
 		mDoFixup()
 
@@ -5506,7 +5508,8 @@ func sysmon() {
 			asmcgocall(*cgo_yield, nil)
 		}
 		// poll network if not polled for more than 10ms
-		// 获取超过 10ms 的 netpoll 结果
+		// 如果超过10ms都没进行 netpoll ，那么强制执行一次 netpoll，
+		// 并且如果获取到了可运行的 G，那么插入全局列表。
 		lastpoll := int64(atomic.Load64(&sched.lastpoll))
 		if netpollinited() && lastpoll != 0 && lastpoll+10*1000*1000 < now {
 			atomic.Cas64(&sched.lastpoll, uint64(lastpoll), uint64(now))
