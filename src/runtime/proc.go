@@ -1378,8 +1378,11 @@ func mstart()
 //go:nosplit
 //go:nowritebarrierrec
 func mstart0() {
+	// 获取 g0
 	_g_ := getg()
 
+	// 确定栈边界
+	// 确定是否为系统栈。若是，则根据系统栈初始化 g 执行栈的边界。
 	osStack := _g_.stack.lo == 0
 	if osStack {
 		// Initialize stack bounds from system stack.
@@ -1403,6 +1406,7 @@ func mstart0() {
 	// This is the g0, so we can also call go:systemstack
 	// functions, which check stackguard1.
 	_g_.stackguard1 = _g_.stackguard0
+	// 调用 mstart1 方法启动 `系统线程` m，进行调度器循环调度。
 	mstart1()
 
 	// Exit this thread.
@@ -1412,6 +1416,7 @@ func mstart0() {
 		// so the logic above hasn't set osStack yet.
 		osStack = true
 	}
+	// 调用 mexit 方法退出系统线程 m。
 	mexit(osStack)
 }
 
@@ -1422,6 +1427,7 @@ func mstart1() {
 	// 拿到的一定是 g0
 	_g_ := getg()
 
+	// 调用 getg 方法获取 g。并且通过前面绑定的 _g_.m.g0 判断所获取的 g 是否 g0。若不是，则直接抛出致命错误。因为调度器仅在 g0 上运行。
 	if _g_ != _g_.m.g0 {
 		throw("bad runtime·mstart")
 	}
@@ -1438,19 +1444,23 @@ func mstart1() {
 	_g_.sched.sp = getcallersp()
 
 	asminit()
+	// 调用 minit 方法初始化 m，并记录调用方的 PC、SP，便于后续 schedule 阶段时的复用。
 	minit()
 
 	// Install signal handlers; after minit so that minit can
 	// prepare the thread to be able to handle the signals.
+	// 若确定当前的 g 所绑定的 m 是 m0，则调用 mstartm0 方法，设置信号 handler。
+	// 该动作必须在 minit 方法之后，这样 minit 方法可以提前准备好线程，以便能够处理信号。
 	if _g_.m == &m0 {
 		mstartm0()
 	}
 
-	// 执行启动函数
+	// 若当前 g 所绑定的 m 有启动函数，则运行。否则跳过。
 	if fn := _g_.m.mstartfn; fn != nil {
 		fn()
 	}
 
+	// 若当前 g 所绑定的 m 不是 m0，则需要调用 acquirep 方法获取并绑定 p，也就是 m 与 p 绑定。
 	if _g_.m != &m0 {
 		// 绑定 P
 		acquirep(_g_.m.nextp.ptr())
