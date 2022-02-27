@@ -58,6 +58,7 @@ func argv_index(argv **byte, i int32) *byte {
 	return *(**byte)(add(unsafe.Pointer(argv), uintptr(i)*goarch.PtrSize))
 }
 
+// 系统参数传递，主要是将系统参数转换传递给程序使用。
 func args(c int32, v **byte) {
 	argc = c
 	argv = v
@@ -134,6 +135,7 @@ func testAtomic64() {
 	}
 }
 
+// 运行时类型检查，主要是校验编译器的翻译工作是否正确，是否有 “坑”。基本代码均为检查 int8 在 unsafe.Sizeof 方法下是否等于 1 这类动作。
 func check() {
 	var (
 		a     int8

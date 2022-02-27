@@ -142,6 +142,7 @@ var runtimeInitTime int64
 var initSigmask sigset
 
 // The main goroutine.
+// 主要工作是运行 main goroutine，虽然在runtime·rt0_go 中指向的是$runtime·mainPC，但实质指向的是 runtime.main。
 func main() {
 	g := getg()
 
@@ -674,7 +675,10 @@ func cpuinit() {
 //	call runtime·mstart
 //
 // The new G calls runtime·main.
+
+// 进行各种运行时组件的初始化，包含调度器、内存分配器、堆、栈、GC 等一大堆初始化工作。会进行 p 的初始化，并将 m0 和某一个 p 进行绑定。
 func schedinit() {
+	// runtime 中 lock 的优先级
 	lockInit(&sched.lock, lockRankSched)
 	lockInit(&sched.sysmonlock, lockRankSysmon)
 	lockInit(&sched.deferlock, lockRankDefer)
@@ -4338,6 +4342,7 @@ func malg(stacksize int32) *g {
 // Create a new g running fn.
 // Put it on the queue of g's waiting to run.
 // The compiler turns a go statement into a call to this.
+// 创建一个新的 goroutine
 func newproc(fn *funcval) {
 	gp := getg()
 	// 获取调用方 PC/IP 寄存器值

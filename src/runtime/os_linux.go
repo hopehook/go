@@ -310,7 +310,7 @@ func getHugePageSize() uintptr {
 	return uintptr(v)
 }
 
-// 确定 cpu 核心数
+// 系统基本参数设置，主要是获取 CPU 核心数和内存物理页大小。
 func osinit() {
 	// cpu 核心数，赋值给 runtime.ncpu
 	ncpu = getproccount()

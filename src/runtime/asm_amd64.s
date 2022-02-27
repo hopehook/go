@@ -310,22 +310,26 @@ ok:
 	CMPL	AX, $NEED_OS_SUPPORT_AX
 	JNE	bad_cpu
 #endif
-
+    // 运行时类型检查，主要是校验编译器的翻译工作是否正确，是否有 “坑”。基本代码均为检查 int8 在 unsafe.Sizeof 方法下是否等于 1 这类动作。
 	CALL	runtime·check(SB)
 
 	MOVL	24(SP), AX		// copy argc
 	MOVL	AX, 0(SP)
 	MOVQ	32(SP), AX		// copy argv
 	MOVQ	AX, 8(SP)
-	// 调用初始化函数
+    // 系统参数传递，主要是将系统参数转换传递给程序使用。
 	CALL	runtime·args(SB)
+	// 系统基本参数设置，主要是获取 CPU 核心数和内存物理页大小。
 	CALL	runtime·osinit(SB)
+	// 进行各种运行时组件的初始化，包含调度器、内存分配器、堆、栈、GC 等一大堆初始化工作。会进行 p 的初始化，并将 m0 和某一个 p 进行绑定。
 	CALL	runtime·schedinit(SB)
 
 	// create a new goroutine to start program
 	// 创建 main goroutine 用于执行 runtime.main，将其放入 P 的本地队列等待调度
+	// 主要工作是运行 main goroutine，虽然在runtime·rt0_go 中指向的是$runtime·mainPC，但实质指向的是 runtime.main。
 	MOVQ	$runtime·mainPC(SB), AX		// entry
 	PUSHQ	AX
+	// 创建一个新的 goroutine，且绑定 runtime.main 方法（也就是应用程序中的入口 main 方法）。并将其放入 m0 绑定的p的本地队列中去，以便后续调度。
 	CALL	runtime·newproc(SB)
 	POPQ	AX
 
