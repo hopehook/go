@@ -856,6 +856,8 @@ top:
 	if trace.enabled {
 		traceGCSTWStart(0)
 	}
+
+	// STW: STOP
 	systemstack(stopTheWorldWithSema)
 	// The gcphase is _GCmark, it will transition to _GCmarktermination
 	// below. The important thing is that the wb remains active until
@@ -891,6 +893,7 @@ top:
 		goto top
 	}
 
+	// 禁用黑色对象标记工作
 	// Disable assists and background workers. We must do
 	// this before waking blocked assists.
 	atomic.Store(&gcBlackenEnabled, 0)
@@ -966,8 +969,11 @@ func gcMarkTermination(nextTriggerRatio float64) {
 			endCheckmarks()
 		}
 
+		// 关闭写屏障
 		// marking is complete so we can turn the write barrier off
 		setGCPhase(_GCoff)
+
+		// 开始清理工作
 		gcSweep(work.mode)
 	})
 
@@ -1047,6 +1053,7 @@ func gcMarkTermination(nextTriggerRatio float64) {
 		throw("failed to set sweep barrier")
 	}
 
+	// STW: START
 	systemstack(func() { startTheWorldWithSema(true) })
 
 	// Flush the heap profile so we can start a new cycle next GC.
