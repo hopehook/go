@@ -585,6 +585,7 @@ func gcStart(trigger gcTrigger) {
 	releasem(mp)
 	mp = nil
 
+	// 清理意外遗留的 span
 	// Pick up the remaining unswept/not being swept spans concurrently
 	//
 	// This shouldn't happen if we're being invoked in background
@@ -638,8 +639,10 @@ func gcStart(trigger gcTrigger) {
 		}
 	}
 
+	// 创建 MarkWorker（休眠状态）
 	gcBgMarkStartWorkers()
 
+	// 重置全局状态变量 work
 	systemstack(gcResetMarkState)
 
 	work.stwprocs, work.maxprocs = gomaxprocs, gomaxprocs
@@ -658,18 +661,24 @@ func gcStart(trigger gcTrigger) {
 	if trace.enabled {
 		traceGCSTWStart(1)
 	}
+
+	// STW: STOP
 	systemstack(stopTheWorldWithSema)
+
+	// 确保进入扫描前，环境清理干净
 	// Finish sweep before we start concurrent scan.
 	systemstack(func() {
 		finishsweep_m()
 	})
 
+	// 清理 sync.Pool
 	// clearpools before we start the GC. If we wait they memory will not be
 	// reclaimed until the next GC cycle.
 	clearpools()
 
 	work.cycles++
 
+	// 控制器
 	// Assists and workers can start the moment we start
 	// the world.
 	gcController.startCycle(now, int(gomaxprocs))
@@ -682,6 +691,7 @@ func gcStart(trigger gcTrigger) {
 		schedEnableUser(false)
 	}
 
+	// 启用写屏障
 	// Enter concurrent mark phase and enable
 	// write barriers.
 	//
@@ -698,6 +708,7 @@ func gcStart(trigger gcTrigger) {
 	// possible.
 	setGCPhase(_GCmark)
 
+	// 初始化相关状态和信号
 	gcBgMarkPrepare() // Must happen before assist enable.
 	gcMarkRootPrepare()
 
@@ -708,6 +719,7 @@ func gcStart(trigger gcTrigger) {
 	// would slow down the tiny allocator.
 	gcMarkTinyAllocs()
 
+	// 允许黑色对象标记
 	// At this point all Ps have enabled the write
 	// barrier, thus maintaining the no white to
 	// black invariant. Enable mutator assists to
@@ -721,6 +733,7 @@ func gcStart(trigger gcTrigger) {
 
 	// Concurrent mark.
 	systemstack(func() {
+		// STW: START
 		now = startTheWorldWithSema(trace.enabled)
 		work.pauseNS += now - work.pauseStart
 		work.tMark = now

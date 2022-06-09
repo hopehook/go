@@ -379,14 +379,14 @@ type mSpanList struct {
 
 //go:notinheap
 type mspan struct {
-	next *mspan     // next span in list, or nil if none
+	next *mspan     // next span in list, or nil if none // 双向链表
 	prev *mspan     // previous span in list, or nil if none
 	list *mSpanList // For debugging. TODO: Remove.
 
 	startAddr uintptr // address of first byte of span aka s.base()
-	npages    uintptr // number of pages in span
+	npages    uintptr // number of pages in span // 页数
 
-	manualFreeList gclinkptr // list of free objects in mSpanManual spans
+	manualFreeList gclinkptr // list of free objects in mSpanManual spans // 待分配的 object 链表
 
 	// freeindex is the slot index between 0 and nelems at which to begin scanning
 	// for the next free object in this span.
