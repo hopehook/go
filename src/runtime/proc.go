@@ -112,7 +112,7 @@ var modinfo string
 
 var (
 	m0           m  // 第 1 个启动的系统线程 m0
-	g0           g  // 这个 g0 不是我们通常所说的 g0，没什么卵用
+	g0           g  // 这个 g0 不是我们通常所说的 g0，是 m0 的 g0，程序最初启动入口 runtime·rt0_go(SB) 初始化的
 	mcache0      *mcache
 	raceprocctx0 uintptr
 )
