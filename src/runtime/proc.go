@@ -176,6 +176,7 @@ func main() {
 		// 启动系统后台监控
 		atomic.Store(&sched.sysmonStarting, 1)
 		systemstack(func() {
+			// 创建 `监控线程`，该线程独立于调度器，不需要跟 p 关联即可运行
 			newm(sysmon, nil, -1)
 		})
 	}
@@ -2284,8 +2285,10 @@ var newmHandoff struct {
 // id is optional pre-allocated m ID. Omit by passing -1.
 //go:nowritebarrierrec
 func newm(fn func(), _p_ *p, id int64) {
+	// 创建 m 对象
 	mp := allocm(_p_, fn, id)
 	mp.doesPark = (_p_ != nil)
+	// 暂存 m
 	mp.nextp.set(_p_)
 	mp.sigmask = initSigmask
 	if gp := getg(); gp != nil && gp.m != nil && (gp.m.lockedExt != 0 || gp.m.incgo) && GOOS != "plan9" {
@@ -5470,6 +5473,9 @@ var needSysmonWorkaround bool = false
 
 // Always runs without a P, so write barriers are not allowed.
 //
+// sysmon 执行一个无限循环，一开始每次循环休眠 20us，之后（1 ms 后）每次休眠时间倍增，最终每一轮都会休眠 10ms。
+//
+// sysmon 中会进行 netpool（获取 fd 事件）、retake（抢占）、forcegc（按时间强制执行 gc），scavenge heap（释放自由列表中多余的项减少内存占用）等处理。
 //go:nowritebarrierrec
 func sysmon() {
 	lock(&sched.lock)
@@ -5660,17 +5666,22 @@ func retake(now int64) uint32 {
 			// allp but not yet created new Ps.
 			continue
 		}
+		// 用于 sysmon 线程记录被监控 p 的系统调用时间和运行时间
 		pd := &_p_.sysmontick
+		// p 的状态
 		s := _p_.status
 		sysretake := false
 		if s == _Prunning || s == _Psyscall {
+			// P 处于运行状态，检查是否运行得太久了
 			// Preempt G if it's running for too long.
+			// 每发生一次调度，调度器 ++ 该值
 			t := int64(_p_.schedtick)
 			if int64(pd.schedtick) != t {
 				pd.schedtick = uint32(t)
 				pd.schedwhen = now
 			} else if pd.schedwhen+forcePreemptNS <= now {
-				// 发出抢占调度
+				// 抢占 G
+				// 连续运行超过 10 毫秒了，发起抢占请求
 				preemptone(_p_)
 				// In case of syscall, preemptone() doesn't
 				// work, because there is no M wired to P.
@@ -5678,9 +5689,13 @@ func retake(now int64) uint32 {
 			}
 		}
 		if s == _Psyscall {
+			// P 处于系统调用之中，需要检查是否需要抢占
 			// Retake P from syscall if it's there for more than 1 sysmon tick (at least 20us).
+			// _p_.syscalltick 用于记录系统调用的次数，在完成系统调用之后加 1
 			t := int64(_p_.syscalltick)
 			if !sysretake && int64(pd.syscalltick) != t {
+				// pd.syscalltick != _p_.syscalltick，说明已经不是上次观察到的系统调用了，
+				// 而是另外一次系统调用，所以需要重新记录 tick 和 when 值
 				pd.syscalltick = uint32(t)
 				pd.syscallwhen = now
 				continue
@@ -5688,6 +5703,11 @@ func retake(now int64) uint32 {
 			// On the one hand we don't want to retake Ps if there is no other work to do,
 			// but on the other hand we want to retake them eventually
 			// because they can prevent the sysmon thread from deep sleep.
+			//
+			// 只要满足下面三个条件中的任意一个，则抢占该 p，否则不抢占
+			// 1. p 的运行队列里面有等待运行的 goroutine
+			// 2. 没有无所事事的 p
+			// 3. 从上一次监控线程观察到 p 对应的 m 处于系统调用之中到现在已经超过 10 毫秒
 			if runqempty(_p_) && atomic.Load(&sched.nmspinning)+atomic.Load(&sched.npidle) > 0 && pd.syscallwhen+10*1000*1000 > now {
 				continue
 			}
@@ -5705,6 +5725,8 @@ func retake(now int64) uint32 {
 				}
 				n++
 				_p_.syscalltick++
+				// 抢占 P
+				// 寻找一新的 m 接管 p
 				handoffp(_p_)
 			}
 			incidlelocked(1)
