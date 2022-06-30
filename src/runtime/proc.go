@@ -3129,6 +3129,7 @@ func pollWork() bool {
 // If now is not 0 it is the current time. stealWork returns the passed time or
 // the current time if now was passed as 0.
 func stealWork(now int64) (gp *g, inheritTime bool, rnow, pollUntil int64, newWork bool) {
+	// 当前 P
 	pp := getg().m.p.ptr()
 
 	ranTimer := false
@@ -3137,16 +3138,20 @@ func stealWork(now int64) (gp *g, inheritTime bool, rnow, pollUntil int64, newWo
 	for i := 0; i < stealTries; i++ {
 		stealTimersOrRunNextG := i == stealTries-1
 
+		// 随机选择一个 P 窃取，不能是当前 P
 		for enum := stealOrder.start(fastrand()); !enum.done(); enum.next() {
 			if sched.gcwaiting != 0 {
 				// GC work may be available.
 				return nil, false, now, pollUntil, true
 			}
+			// 随机一个调度器 p2
 			p2 := allp[enum.position()]
+			// 不能是当前调度器本身
 			if pp == p2 {
 				continue
 			}
 
+			// 窃取定时器任务
 			// Steal timers from p2. This call to checkTimers is the only place
 			// where we might hold a lock on a different P's timers. We do this
 			// once on the last pass before checking runnext because stealing
@@ -3182,6 +3187,7 @@ func stealWork(now int64) (gp *g, inheritTime bool, rnow, pollUntil int64, newWo
 				}
 			}
 
+			// 不能是 idle 调度器
 			// Don't bother to attempt to steal if p2 is idle.
 			if !idlepMask.read(enum.position()) {
 				if gp := runqsteal(pp, p2, stealTimersOrRunNextG); gp != nil {
@@ -6252,12 +6258,19 @@ retry:
 // Batch is a ring buffer starting at batchHead.
 // Returns number of grabbed goroutines.
 // Can be executed by any P.
+// _p_ 是被窃取调度器
+// batch 是窃取者队列
+// batchHead 为窃取者队列的队尾索引
 func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool) uint32 {
 	for {
 		h := atomic.LoadAcq(&_p_.runqhead) // load-acquire, synchronize with other consumers
 		t := atomic.LoadAcq(&_p_.runqtail) // load-acquire, synchronize with the producer
 		n := t - h
+		// 一半数量
 		n = n - n/2
+
+		// 队列为空，会尝试获取 被窃取调度器缓存的任务 __runnext__
+		// __runnext__ 在 runqput() 出现过
 		if n == 0 {
 			if stealRunNextG {
 				// Try to steal from _p_.runnext.
@@ -6285,6 +6298,8 @@ func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool
 					if !_p_.runnext.cas(next, 0) {
 						continue
 					}
+
+					// 将窃取任务添加到队尾
 					batch[batchHead%uint32(len(batch))] = next
 					return 1
 				}
@@ -6295,9 +6310,12 @@ func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool
 			continue
 		}
 		for i := uint32(0); i < n; i++ {
+			// 从 _p_ 本地队列取出任务
 			g := _p_.runq[(h+i)%uint32(len(_p_.runq))]
+			// 添加到队尾
 			batch[(batchHead+i)%uint32(len(batch))] = g
 		}
+		// 更新 _p_ 的队头，说明任务已被窃取
 		if atomic.CasRel(&_p_.runqhead, h, h+n) { // cas-release, commits consume
 			return n
 		}
@@ -6307,6 +6325,7 @@ func runqgrab(_p_ *p, batch *[256]guintptr, batchHead uint32, stealRunNextG bool
 // Steal half of elements from local runnable queue of p2
 // and put onto local runnable queue of p.
 // Returns one of the stolen elements (or nil if failed).
+// 从 p2 的任务队列中窃取一半的任务过来放入到当前调度器 P 的本地队列中
 // 只有本地队列，全局队列都没有可运行的 G，才到别的 P 那里偷，因为会影响目标 P 的运行
 func runqsteal(_p_, p2 *p, stealRunNextG bool) *g {
 	t := _p_.runqtail

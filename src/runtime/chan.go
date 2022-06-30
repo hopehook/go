@@ -549,7 +549,7 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		return true, false
 	}
 
-	// 从等待队列获取发送者
+	// 从等待队列获取 `发送者`
 	if sg := c.sendq.dequeue(); sg != nil {
 		// Found a waiting sender. If buffer is size 0, receive value
 		// directly from sender. Otherwise, receive from head of queue
@@ -683,7 +683,7 @@ func recv(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
 	if sg.releasetime != 0 {
 		sg.releasetime = cputicks()
 	}
-	// 唤醒 发送者，接触其阻塞
+	// 唤醒 发送者，解除其阻塞
 	goready(gp, skip+1)
 }
 
