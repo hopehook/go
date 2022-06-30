@@ -1127,6 +1127,7 @@ func nilfunc() {
 func gostartcallfn(gobuf *gobuf, fv *funcval) {
 	var fn unsafe.Pointer
 	if fv != nil {
+		// fn: gorotine 的入口地址，初始化时对应的是 runtime.main
 		fn = unsafe.Pointer(fv.fn)
 	} else {
 		fn = unsafe.Pointer(abi.FuncPCABIInternal(nilfunc))

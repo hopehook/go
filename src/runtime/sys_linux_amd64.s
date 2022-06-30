@@ -542,14 +542,18 @@ TEXT runtime·madvise(SB),NOSPLIT,$0
 // int64 futex(int32 *uaddr, int32 op, int32 val,
 //	struct timespec *timeout, int32 *uaddr2, int32 val2);
 TEXT runtime·futex(SB),NOSPLIT,$0
+    // 为系统调用准备参数
 	MOVQ	addr+0(FP), DI
 	MOVL	op+8(FP), SI
 	MOVL	val+12(FP), DX
 	MOVQ	ts+16(FP), R10
 	MOVQ	addr2+24(FP), R8
 	MOVL	val3+32(FP), R9
+	// 系统调用编号
 	MOVL	$SYS_futex, AX
+	// 执行 futex 系统调用进入休眠，被唤醒后接着执行下一条 MOVL 指令
 	SYSCALL
+	// 保存系统调用的返回值
 	MOVL	AX, ret+40(FP)
 	RET
 

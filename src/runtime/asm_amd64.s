@@ -150,17 +150,25 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	MOVQ	DI, AX		// argc
 	MOVQ	SI, BX		// argv
 	SUBQ	$(5*8), SP		// 3args 2auto
+	// 调整栈顶寄存器使其按 16 字节对齐
 	ANDQ	$~15, SP
-	MOVQ	AX, 24(SP)
-	MOVQ	BX, 32(SP)
+	MOVQ	AX, 24(SP)  // argc
+	MOVQ	BX, 32(SP)  // argv
 
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
+	// 《初始化 g0 栈》
+	// 把 g0 的地址存入 DI
 	MOVQ	$runtime·g0(SB), DI
+	// BX = SP - 64*1024 + 104
 	LEAQ	(-64*1024+104)(SP), BX
+	// g0.stackguard0 = SP - 64*1024 + 104
 	MOVQ	BX, g_stackguard0(DI)
+	// g0.stackguard1 = SP - 64*1024 + 104
 	MOVQ	BX, g_stackguard1(DI)
+	// g0.stack.lo = SP - 64*1024 + 104
 	MOVQ	BX, (g_stack+stack_lo)(DI)
+	// g0.stack.hi = SP
 	MOVQ	SP, (g_stack+stack_hi)(DI)
 
 	// find out information about the processor we're on
@@ -240,10 +248,16 @@ needtls:
 	JMP ok
 #endif
 
+    // 《主线程绑定 m0》
+    // 初始化 m 的 tls
+    // DI = &m0.tls，取 m0 的 tls 成员的地址到 DI 寄存器
 	LEAQ	runtime·m0+m_tls(SB), DI
+	// 调用 settls 设置线程本地存储，settls 函数的参数在 DI 寄存器中
+	// 之后，可通过 fs 段寄存器找到 m.tls
 	CALL	runtime·settls(SB)
 
 	// store through it, to make sure it works
+	// 获取 fs 段基址并放入 BX 寄存器，其实就是 m0.tls[1] 的地址，get_tls 的代码由编译器生成
 	get_tls(BX)
 	MOVQ	$0x123, g(BX)
 	MOVQ	runtime·m0+m_tls(SB), AX
@@ -252,9 +266,13 @@ needtls:
 	CALL	runtime·abort(SB)
 ok:
 	// set the per-goroutine and per-mach "registers"
+	// 获取 fs 段基址到 BX 寄存器
 	get_tls(BX)
+	// 将 g0 的地址存储到 CX，CX = &g0
 	LEAQ	runtime·g0(SB), CX
+	// 把 g0 的地址保存在线程本地存储里面，也就是 m0.tls[0]=&g0
 	MOVQ	CX, g(BX)
+	// 将 m0 的地址存储到 AX，AX = &m0
 	LEAQ	runtime·m0(SB), AX
 
 	// save m->g0 = g0
@@ -313,6 +331,7 @@ ok:
     // 运行时类型检查，主要是校验编译器的翻译工作是否正确，是否有 “坑”。基本代码均为检查 int8 在 unsafe.Sizeof 方法下是否等于 1 这类动作。
 	CALL	runtime·check(SB)
 
+    // 《初始化 m0 》
 	MOVL	24(SP), AX		// copy argc
 	MOVL	AX, 0(SP)
 	MOVQ	32(SP), AX		// copy argv
@@ -328,8 +347,11 @@ ok:
 	// 创建 main goroutine 用于执行 runtime.main，将其放入 P 的本地队列等待调度
 	// 主要工作是运行 main goroutine，虽然在runtime·rt0_go 中指向的是$runtime·mainPC，但实质指向的是 runtime.main。
 	MOVQ	$runtime·mainPC(SB), AX		// entry
+    // newproc 的第二个参数入栈，也就是新的 goroutine 需要执行的函数
+    // AX = &funcval{runtime·main}
 	PUSHQ	AX
-	// 创建一个新的 goroutine，且绑定 runtime.main 方法（也就是应用程序中的入口 main 方法）。并将其放入 m0 绑定的p的本地队列中去，以便后续调度。
+	// 创建 main goroutine，且绑定 runtime.main 方法（也就是应用程序中的入口 main 方法）。
+	// 并将其放入 m0 绑定的 p 的本地队列中去，以便后续调度。
 	CALL	runtime·newproc(SB)
 	POPQ	AX
 
@@ -337,6 +359,7 @@ ok:
 	// 让当前线程 M0 开始调度，会执行 main goroutine
 	CALL	runtime·mstart(SB)
 
+    // 永远不会返回，万一返回了，crash 掉
 	CALL	runtime·abort(SB)	// mstart should never return
 	RET
 
@@ -381,8 +404,10 @@ TEXT runtime·mstart(SB),NOSPLIT|TOPFRAME,$0
 // func gogo(buf *gobuf)
 // restore state from Gobuf; longjmp
 TEXT runtime·gogo(SB), NOSPLIT, $0-8
-	MOVQ	buf+0(FP), BX		// gobuf // 将第一个 FP 伪寄存器所指向的 gobuf 的第一个参数存入 BX 寄存器, gobuf 的一个参数即是 SP 指针
-	MOVQ	gobuf_g(BX), DX     // 将 gp.sched.g 保存到 DX 寄存器
+    // 将第一个 FP 伪寄存器所指向的 gobuf 的第一个参数存入 BX 寄存器, gobuf 的一个参数即是 SP 指针
+    // 0(FP) 表示第一个参数，即 buf = &gp.sched
+	MOVQ	buf+0(FP), BX		// gobuf
+	MOVQ	gobuf_g(BX), DX     // 将 gp.sched.g 的指针地址 保存到 DX 寄存器
 	MOVQ	0(DX), CX		// make sure g != nil
 	JMP	gogo<>(SB)
 
@@ -395,7 +420,9 @@ TEXT gogo<>(SB), NOSPLIT, $0
 
 	// 下面的指令则是对函数栈的 BP/SP 寄存器(指针)的存取，最后进入到指定的代码区域，执行函数栈帧
 	MOVQ	DX, R14		// set the g register
-	MOVQ	gobuf_sp(BX), SP	// restore SP // 通过恢复 SP 寄存器值切换到 G 栈
+	// 通过恢复 SP 寄存器值切换到 G 栈
+	MOVQ	gobuf_sp(BX), SP	// restore SP
+	// 恢复调度上下文到 CPU 相关寄存器
 	MOVQ	gobuf_ret(BX), AX
 	MOVQ	gobuf_ctxt(BX), DX
 	MOVQ	gobuf_bp(BX), BP
@@ -420,13 +447,15 @@ TEXT gogo<>(SB), NOSPLIT, $0
 // 实现 "断点恢复" 的关键由 mcall 实现，它将当前执行状态，包括 SP、PC 等值保存到 G.sched 区域
 // 当 execute 的 gogo 再次执行该任务时，自然可以从中恢复任务，因为执行栈是自带的，不用担心丢失
 
-// 可以看到 runtime.mcall 函数的主要逻辑是从当前 goroutine 切换回 g0 的系统堆栈，然后调用 fn(g)，此处的 g 即是当前运行的 goroutine
+// 可以看到 runtime.mcall 函数的主要逻辑是从当前 goroutine 切换回 g0 的系统栈，然后调用 fn(g)，此处的 g 即是当前运行的 goroutine
 // 这个方法会保存当前运行的 G 的 PC/SP 到 g->sched 里，以便该 G 可以在以后被重新恢复执行，因为也涉及到寄存器和堆栈指针的操作，所以也需要使用汇编实现
 TEXT runtime·mcall<ABIInternal>(SB), NOSPLIT, $0-8
 	MOVQ	AX, DX	// DX = fn
 
 	// save state in g->sched
+	// mcall 返回地址放入 BX
 	MOVQ	0(SP), BX	// caller's PC
+	// g.sched.pc = BX，保存 g 的 PC
 	MOVQ	BX, (g_sched+gobuf_pc)(R14)
 	LEAQ	fn+0(FP), BX	// caller's SP
 	MOVQ	BX, (g_sched+gobuf_sp)(R14)
