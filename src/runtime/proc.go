@@ -5613,8 +5613,8 @@ func sysmon() {
 		// retake P's blocked in syscalls
 		// and preempt long running G's
 		// 抢占调度
-		// 1. 抢夺 syscall 长时间阻塞的 P
-		// 2. 长时间运行的 G
+		// 1. handoffp: 抢夺 syscall 长时间阻塞的 P，给其他 M 去执行，避免陷入系统调用无法执行剩下的 G
+		// 2. preemptone: 抢占长时间运行的 G，避免 G 阻塞调度
 		if retake(now) != 0 {
 			idle = 0
 		} else {
