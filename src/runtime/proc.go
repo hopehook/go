@@ -3506,6 +3506,8 @@ top:
 		}
 	}
 	// 为了确保公平，每处理 n 个任务，就去全局队列获取 G
+	// schedule 中 traceReader 和 gcWorker 优先于一般 goroutine
+	// 比如开启了 trace，gp != nil，这里就不执行
 	if gp == nil {
 		// Check the global runnable queue once in a while to ensure fairness.
 		// Otherwise two goroutines can completely occupy the local runqueue
