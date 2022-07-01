@@ -64,6 +64,7 @@ func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {
 	}
 
 	// Entry doesn't exist yet. Make a new entry & add it.
+	// 在 hash 表中没有找到 itab，那么新生成一个 itab
 	m = (*itab)(persistentalloc(unsafe.Sizeof(itab{})+uintptr(len(inter.mhdr)-1)*goarch.PtrSize, 0, &memstats.other_sys))
 	m.inter = inter
 	m._type = typ
@@ -74,6 +75,7 @@ func getitab(inter *interfacetype, typ *_type, canfail bool) *itab {
 	// Note: m.hash is _not_ the hash used for the runtime itabTable hash table.
 	m.hash = 0
 	m.init()
+	// 添加到全局的 hash 表中
 	itabAdd(m)
 	unlock(&itabLock)
 finish:
@@ -119,6 +121,7 @@ func (t *itabTableType) find(inter *interfacetype, typ *_type) *itab {
 
 // itabAdd adds the given itab to the itab hash table.
 // itabLock must be held.
+// 检查 _type 是否符合 interface_type 并且创建对应的 itab 结构体 将其放到 hash 表中
 func itabAdd(m *itab) {
 	// Bugs can lead to calling this while mallocing is set,
 	// typically because this is called while panicing.

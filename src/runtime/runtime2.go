@@ -208,8 +208,8 @@ type funcval struct {
 }
 
 type iface struct {
-	tab  *itab
-	data unsafe.Pointer
+	tab  *itab           // 表示接口的类型以及赋给这个接口的实体类型。
+	data unsafe.Pointer  // 指向接口具体的值，一般而言是一个指向 `堆内存` 的指针。
 }
 
 type eface struct {
@@ -990,10 +990,16 @@ type funcinl struct {
 // Needs to be in sync with
 // ../cmd/compile/internal/reflectdata/reflect.go:/^func.WriteTabs.
 type itab struct {
-	inter *interfacetype
-	_type *_type
+	inter *interfacetype  // 接口的类型
+	_type *_type          // 实体的类型
 	hash  uint32 // copy of _type.hash. Used for type switches.
 	_     [4]byte
+	// fun 字段放置和接口方法对应的具体数据类型的方法地址，实现接口调用方法的动态分派，一般在每次给接口赋值发生转换时会更新此表，或者直接拿缓存的 itab。
+	//
+	// 为什么 fun 数组的大小为 1，要是接口定义了多个方法可怎么办？
+	// 实际上，这里存储的是第一个方法的函数指针，如果有更多的方法，在它之后的内存空间里继续存储。
+	// 从汇编角度来看，通过增加地址就能获取到这些函数指针，没什么影响。
+	// 顺便提一句，这些方法是按照函数名称的字典序进行排列的。
 	fun   [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.
 }
 
