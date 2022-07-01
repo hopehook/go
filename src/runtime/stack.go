@@ -960,6 +960,7 @@ func round2(x int32) int32 {
 //
 //go:nowritebarrierrec
 func newstack() {
+	// thisg = g0
 	thisg := getg()
 	// TODO: double check all gp. shouldn't be getg().
 	if thisg.m.morebuf.g.ptr().stackguard0 == stackFork {
@@ -972,6 +973,7 @@ func newstack() {
 		throw("runtime: wrong goroutine in newstack")
 	}
 
+	// gp = 当前执行的 goroutine
 	gp := thisg.m.curg
 
 	if thisg.m.curg.throwsplit {
@@ -1018,12 +1020,15 @@ func newstack() {
 	// If the GC is in some way dependent on this goroutine (for example,
 	// it needs a lock held by the goroutine), that small preemption turns
 	// into a real deadlock.
+	// 检查 g.stackguard0 是否被设置成抢占标志
 	preempt := stackguard0 == stackPreempt
 	if preempt {
 		if !canPreemptM(thisg.m) {
 			// Let the goroutine keep running for now.
 			// gp->preempt is set, so it will be preempted next time.
+			// 还原 stackguard0 为正常值，表示我们已经处理过抢占请求了
 			gp.stackguard0 = gp.stack.lo + _StackGuard
+			// 不抢占，调用 gogo 继续运行当前这个 g，不需要调用 schedule 函数去挑选另一个 goroutine
 			gogo(&gp.sched) // never return
 		}
 	}
@@ -1067,6 +1072,7 @@ func newstack() {
 		}
 
 		// Act like goroutine called runtime.Gosched.
+		// 调用 gopreempt_m 把 gp 切换出去
 		gopreempt_m(gp) // never return
 	}
 

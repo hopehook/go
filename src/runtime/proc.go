@@ -2523,9 +2523,8 @@ func mspinning() {
 //
 // Must not have write barriers because this may be called without a P.
 //go:nowritebarrierrec
-// startm 简单来说是判断是否有空闲的P，如果没有则返回，如果有空闲的P，再尝试看有没有空闲的M，有的话，唤醒该M起来工作。
-// 这样看起来好像M的个数会被P的个数限制，但其实不一定，因为 _p_ 参数不一定为 nil， 当 _p_ 不为 nil 的时候，是可能新建一个M来服务的，比如cgo调用，阻塞的系统调用等。
-// 如果要继续深究， 就看一下 handoffp 函数及相关调用，这里就不展开了。
+// startm 简单来说是判断是否有空闲的P，如果没有则返回，如果有空闲的P，再尝试看有没有空闲的 M，有的话，唤醒该 M 起来工作。
+// 这样看起来好像 M 的个数会被 P 的个数限制，但其实不一定，因为 _p_ 参数不一定为 nil， 当 _p_ 不为 nil 的时候，是可能新建一个 M 来服务的，比如cgo调用，阻塞的系统调用等。
 func startm(_p_ *p, spinning bool) {
 	// Disable preemption.
 	//
@@ -2561,7 +2560,7 @@ func startm(_p_ *p, spinning bool) {
 			return
 		}
 	}
-	// 获取一个空闲的M
+	// 从空闲链表获取 M
 	nmp := mget()
 	if nmp == nil {
 		// No M is available, we must drop sched.lock and call newm.
@@ -5773,20 +5772,28 @@ func preemptone(_p_ *p) bool {
 	if mp == nil || mp == getg().m {
 		return false
 	}
+	// 被抢占的 goroutine
 	gp := mp.curg
 	if gp == nil || gp == mp.g0 {
 		return false
 	}
 
+	// 设置抢占标志
 	gp.preempt = true
 
 	// Every call in a goroutine checks for stack overflow by
 	// comparing the current stack pointer to gp->stackguard0.
 	// Setting gp->stackguard0 to StackPreempt folds
 	// preemption into the normal stack overflow check.
+	//
+	// 栈检查抢占 stackPreempt
+	// 在 goroutine 内部的每次调用都会比较 `栈顶指针` 和 g.stackguard0，
+	// 来判断是否发生了栈溢出。stackPreempt 非常大的一个数，比任何栈都大
+	// stackPreempt = 0xfffffade
 	gp.stackguard0 = stackPreempt
 
 	// Request an async preemption of this P.
+	// 异步信号抢占 asyncPreempt
 	if preemptMSupported && debug.asyncpreemptoff == 0 {
 		_p_.preempt = true
 		preemptM(mp)

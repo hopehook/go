@@ -137,7 +137,13 @@ func noteclear(n *note) {
 }
 
 // 唤醒线程 M
+// notewakeup 函数首先使用 atomic.Xchg 设置 note.key 值为 1，
+// 这是为了使被唤醒的线程可以通过查看该值是否等于 1 来确定是被其它线程唤醒还是意外从睡眠中苏醒了过来。
+//
+// 如果该值为 1 则表示是被唤醒的，可以继续工作，但如果该值为 0 则表示是意外苏醒，需要再次进入睡眠。
 func notewakeup(n *note) {
+	// 设置 n.key = 1, 被唤醒的线程通过查看该值是否等于 1
+	// 来确定是被其它线程唤醒还是意外从睡眠中苏醒
 	old := atomic.Xchg(key32(&n.key), 1)
 	if old != 0 {
 		print("notewakeup - double wakeup (", old, ")\n")
