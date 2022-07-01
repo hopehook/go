@@ -100,6 +100,7 @@ func selparkcommit(gp *g, _ unsafe.Pointer) bool {
 	return true
 }
 
+// 空的 select 语句会被转换成调用 runtime.block 直接挂起当前 Goroutine；
 func block() {
 	gopark(nil, nil, waitReasonSelectNoCases, traceEvGoStop, 1) // forever
 }
@@ -119,6 +120,37 @@ func block() {
 // ordinal position of its respective select{recv,send,default} call.
 // Also, if the chosen scase was a receive operation, it reports whether
 // a value was received.
+//
+// 在编译器已经对 select 语句进行优化之后，Go 语言会在运行时执行编译期间展开的 runtime.selectgo 函数，该函数会按照以下的流程执行：
+//   1. 随机生成一个遍历的轮询顺序 pollOrder 并根据 Channel 地址生成锁定顺序 lockOrder；
+//   2. 根据 pollOrder 遍历所有的 case 查看是否有可以立刻处理的 Channel；
+//      如果存在，直接获取 case 对应的索引并返回；
+//      如果不存在，创建 runtime.sudog 结构体，将当前 Goroutine 加入到所有相关 Channel 的收发队列，并调用 runtime.gopark 挂起当前 Goroutine 等待调度器的唤醒；
+//   3. 当调度器唤醒当前 Goroutine 时，会再次按照 lockOrder 遍历所有的 case，从中查找需要被处理的 runtime.sudog 对应的索引；
+//
+// select 关键字是 Go 语言特有的控制结构，它的实现原理比较复杂，需要编译器和运行时函数的通力合作。
+// 一个包含三个 case 的正常 select 语句其实会被展开成如下所示的逻辑，我们可以看到其中处理的三个部分：
+//	selv := [3]scase{}
+//	order := [6]uint16
+//	for i, cas := range cases {
+//		c := scase{}
+//		c.kind = ...
+//		c.elem = ...
+//		c.c = ...
+//	}
+//	chosen, revcOK := selectgo(selv, order, 3)
+//	if chosen == 0 {
+//		...
+//		break
+//	}
+//	if chosen == 1 {
+//		...
+//		break
+//	}
+//	if chosen == 2 {
+//		...
+//		break
+//	}
 func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, block bool) (int, bool) {
 	if debugSelect {
 		print("select: cas0=", cas0, "\n")
@@ -179,7 +211,11 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 		pollorder[j] = uint16(i)
 		norder++
 	}
+	// 轮询顺序：通过 runtime.fastrandn 函数引入随机性；
+	//  - 避免饥饿：随机的轮询顺序可以避免 Channel 的饥饿问题，保证公平性；
 	pollorder = pollorder[:norder]
+	// 加锁顺序：按照 Channel 的地址排序后确定加锁顺序；
+	//  - 避免死锁：根据 Channel 的地址顺序确定加锁顺序能够避免死锁的发生。
 	lockorder = lockorder[:norder]
 
 	// sort the cases by Hchan address to get the locking order.
@@ -228,6 +264,7 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	}
 
 	// lock all the channels involved in the select
+	// 根据 Channel 的地址排序确定加锁顺序
 	sellock(scases, lockorder)
 
 	var (
@@ -242,6 +279,21 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	)
 
 	// pass 1 - look for something already waiting
+	// 循环执行的第一个阶段，查找已经准备就绪的 Channel。
+	// 第一阶段的主要职责是查找所有 case 中是否有可以立刻被处理的 Channel。
+	// 无论是在等待的 Goroutine 上还是缓冲区中，只要存在数据满足条件就会立刻处理，
+	// 如果不能立刻找到活跃的 Channel 就会进入循环的下一阶段，
+	// 按照需要将当前 Goroutine 加入到 Channel 的 sendq 或者 recvq 队列中
+	//
+	//
+	// runtime.selectgo 函数会根据不同情况通过 goto 语句跳转到函数内部的不同标签执行相应的逻辑，其中包括：
+	//	 bufrecv：可以从缓冲区读取数据；
+	//	 bufsend：可以向缓冲区写入数据；
+	//	 recv：可以从休眠的发送方获取数据；
+	//	 send：可以向休眠的接收方发送数据；
+	//	 rclose：可以从关闭的 Channel 读取 EOF；
+	//	 sclose：向关闭的 Channel 发送数据；
+	//	 retc：结束调用并返回；
 	var casi int
 	var cas *scase
 	var caseSuccess bool
@@ -338,6 +390,12 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	// otherwise they stack up on quiet channels
 	// record the successful case, if any.
 	// We singly-linked up the SudoGs in lock order.
+	//
+	// 第三次遍历全部 case 时，我们会先获取当前 Goroutine 接收到的参数 sudog 结构，
+	// 我们会依次对比所有 case 对应的 sudog 结构找到被唤醒的 case，获取该 case 对应的索引并返回。
+    //
+    // 由于当前的 select 结构找到了一个 case 执行，那么剩下 case 中没有被用到的 sudog 就会被忽略并且释放掉。
+    // 为了不影响 Channel 的正常使用，我们还是需要将这些废弃的 sudog 从 Channel 中出队。
 	casi = -1
 	cas = nil
 	caseSuccess = false

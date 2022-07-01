@@ -480,6 +480,12 @@ type Array struct {
 }
 
 // Slice contains Type fields specific to slice types.
+// 编译期间的 Slice 不是完整的，在运行时的完整表示：
+//	type SliceHeader struct {
+//		Data uintptr  // 是指向数组的指针;
+//		Len  int      // 是当前切片的长度；
+//		Cap  int      // 是当前切片的容量，即 Data 数组的大小：
+//	}
 type Slice struct {
 	Elem *Type // element type
 }
@@ -624,6 +630,9 @@ func newType(et Kind) *Type {
 }
 
 // NewArray returns a new fixed-length array Type.
+// 编译期间的数组类型生成
+// 元素类型 Elem
+// 数组的大小 Bound
 func NewArray(elem *Type, bound int64) *Type {
 	if bound < 0 {
 		base.Fatalf("NewArray: invalid bound %v", bound)
@@ -641,6 +650,7 @@ func NewArray(elem *Type, bound int64) *Type {
 }
 
 // NewSlice returns the slice Type with element type elem.
+// 切片在编译期间的生成的类型只会包含切片中的元素类型，即 int 或者 interface{} 等
 func NewSlice(elem *Type) *Type {
 	if t := elem.cache.slice; t != nil {
 		if t.Elem() != elem {
@@ -653,6 +663,9 @@ func NewSlice(elem *Type) *Type {
 	}
 
 	t := newType(TSLICE)
+	// 结构体中的 Extra 字段是一个只包含切片内元素类型的结构，
+	// 也就是说切片内元素的类型都是在编译期间确定的，
+	// 编译器确定了类型之后，会将类型存储在 Extra 字段中帮助程序在运行时动态获取。
 	t.extra = Slice{Elem: elem}
 	elem.cache.slice = t
 	if elem.HasTParam() {

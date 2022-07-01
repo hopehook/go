@@ -2079,7 +2079,9 @@ func (v Value) send(x Value, nb bool) (selected bool) {
 // It panics if CanSet returns false.
 // As in Go, x's value must be assignable to v's type.
 func (v Value) Set(x Value) {
+	// 检查当前反射对象是否是可以被设置的
 	v.mustBeAssignable()
+	// 检查当前反射字段是否是对外公开的
 	x.mustBeExported() // do not let unexported x leak
 	var target unsafe.Pointer
 	if v.kind() == Interface {
@@ -2954,6 +2956,7 @@ func Indirect(v Value) Value {
 
 // ValueOf returns a new Value initialized to the concrete value
 // stored in the interface i. ValueOf(nil) returns the zero Value.
+// 获取数据的运行时表示
 func ValueOf(i any) Value {
 	if i == nil {
 		return Value{}
@@ -3026,6 +3029,11 @@ func NewAt(typ Type, p unsafe.Pointer) Value {
 // It panics if v is not assignable to typ.
 // For a conversion to an interface type, target is a suggested scratch space to use.
 // target must be initialized memory (or nil).
+// 返回一个新的反射对象，这个返回的反射对象指针会直接覆盖原反射变量。
+//
+// reflect.Value.assignTo 会根据当前和被设置的反射对象类型创建一个新的 reflect.Value 结构体：
+//   - 如果两个反射对象的类型是可以被直接替换，就会直接返回目标反射对象；
+//   - 如果当前反射对象是接口并且目标对象实现了接口，就会把目标对象简单包装成接口值；
 func (v Value) assignTo(context string, dst *rtype, target unsafe.Pointer) Value {
 	if v.flag&flagMethod != 0 {
 		v = makeMethodValue(context, v)

@@ -78,6 +78,9 @@ func concatstring5(buf *tmpBuf, a0, a1, a2, a3, a4 string) string {
 // n is the length of the slice.
 // Buf is a fixed-size buffer for the result,
 // it is not nil if the result does not escape.
+// 字符串和 []byte 中的内容虽然一样，但是字符串的内容是只读的，
+// 我们不能通过下标或者其他形式改变其中的数据，而 []byte 中的内容是可以读写的。
+// 不过无论从哪种类型转换到另一种都需要拷贝数据，而内存拷贝的性能损耗会随着字符串和 []byte 长度的增长而增长。
 func slicebytetostring(buf *tmpBuf, ptr *byte, n int) (str string) {
 	if n == 0 {
 		// Turns out to be a relatively common case.

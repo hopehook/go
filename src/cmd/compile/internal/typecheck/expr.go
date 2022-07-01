@@ -659,6 +659,7 @@ func tcIndex(n *ir.IndexExpr) ir.Node {
 			why = "slice"
 		}
 
+		// 访问数组的索引是非整数时
 		if n.Index.Type() != nil && !n.Index.Type().IsInteger() {
 			base.Errorf("non-integer %s index %v", why, n.Index)
 			return n
@@ -667,8 +668,10 @@ func tcIndex(n *ir.IndexExpr) ir.Node {
 		if !n.Bounded() && ir.IsConst(n.Index, constant.Int) {
 			x := n.Index.Val()
 			if constant.Sign(x) < 0 {
+				// 访问数组的索引是负数时
 				base.Errorf("invalid %s index %v (index must be non-negative)", why, n.Index)
 			} else if t.IsArray() && constant.Compare(x, token.GEQ, constant.MakeInt64(t.NumElem())) {
+				// 访问数组的索引越界时
 				base.Errorf("invalid array index %v (out of bounds for %d-element array)", n.Index, t.NumElem())
 			} else if ir.IsConst(n.X, constant.String) && constant.Compare(x, token.GEQ, constant.MakeInt64(int64(len(ir.StringVal(n.X))))) {
 				base.Errorf("invalid string index %v (out of bounds for %d-byte string)", n.Index, len(ir.StringVal(n.X)))

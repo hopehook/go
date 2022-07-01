@@ -34,11 +34,27 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 	sellineno := base.Pos
 
 	// optimization: zero-case select
+	// 当 select 结构中不包含任何 case，直接翻译成调用 runtime.block
+	// select {} -> runtime.block
+	// 空的 select 语句会直接阻塞当前 Goroutine，导致 Goroutine 进入无法被唤醒的 `永久休眠` 状态。
 	if ncas == 0 {
 		return []ir.Node{mkcallstmt("block")}
 	}
 
 	// optimization: one-case select: single op.
+	// 单一 channel
+	//  // 改写前
+	//	select {
+	//	case v, ok <-ch: // case ch <- v
+	//		...
+	//	}
+	//
+	//	// 改写后
+	//	if ch == nil {
+	//		block()
+	//	}
+	//	v, ok := <-ch // case ch <- v
+	//	...
 	if ncas == 1 {
 		cas := cases[0]
 		ir.SetPos(cas)
@@ -96,6 +112,38 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 	}
 
 	// optimization: two-case select but one is default: single non-blocking op.
+	// 单一管道 + default 管道
+	// 1. 发送管道
+	//  // 改写前
+	//	select {
+	//	case ch <- i:
+	//		...
+	//	default:
+	//		...
+	//	}
+	//
+	//  // 改写后
+	//	if selectnbsend(ch, i) {
+	//		...
+	//	} else {
+	//		...
+	//	}
+	//
+	// 2. 接收管道
+	// 改写前
+	//	select {
+	//	case v <- ch: // case v, ok <- ch:
+	//		......
+	//	default:
+	//		......
+	//	}
+	//
+	//	// 改写后
+	//	if selectnbrecv(&v, ch) { // if selectnbrecv2(&v, &ok, ch) {
+	//		...
+	//	} else {
+	//		...
+	//	}
 	if ncas == 2 && dflt != nil {
 		cas := cases[0]
 		if cas == dflt {

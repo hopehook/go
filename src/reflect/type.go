@@ -68,6 +68,7 @@ type Type interface {
 	//
 	// For an interface type, the returned Method's Type field gives the
 	// method signature, without a receiver, and the Func field is nil.
+	// MethodByName 可以获取当前类型对应方法的引用
 	MethodByName(string) (Method, bool)
 
 	// NumMethod returns the number of methods accessible using Method.
@@ -101,6 +102,7 @@ type Type interface {
 	Kind() Kind
 
 	// Implements reports whether the type implements the interface type u.
+	// 可以判断当前类型是否实现了某个接口
 	Implements(u Type) bool
 
 	// AssignableTo reports whether a value of the type is assignable to type u.
@@ -842,6 +844,7 @@ func (t *rtype) NumMethod() int {
 	return len(t.exportedMethods())
 }
 
+// 获得类型实现的方法
 func (t *rtype) Method(i int) (m Method) {
 	if t.Kind() == Interface {
 		tt := (*interfaceType)(unsafe.Pointer(t))
@@ -965,6 +968,7 @@ func (t *rtype) Elem() Type {
 	panic("reflect: Elem of invalid type " + t.String())
 }
 
+// 获取类型包含的全部字段。
 func (t *rtype) Field(i int) StructField {
 	if t.Kind() != Struct {
 		panic("reflect: Field of non-struct type " + t.String())
@@ -1421,6 +1425,7 @@ func (t *structType) FieldByName(name string) (f StructField, present bool) {
 
 // TypeOf returns the reflection Type that represents the dynamic type of i.
 // If i is a nil interface value, TypeOf returns nil.
+// 获取类型信息
 func TypeOf(i any) Type {
 	eface := *(*emptyInterface)(unsafe.Pointer(&i))
 	return toType(eface.typ)
@@ -1528,6 +1533,8 @@ func implements(T, V *rtype) bool {
 	if T.Kind() != Interface {
 		return false
 	}
+
+	// 如果接口中不包含任何方法，就意味着这是一个空的接口，任意类型都自动实现该接口，这时会直接返回 true。
 	t := (*interfaceType)(unsafe.Pointer(T))
 	if len(t.methods) == 0 {
 		return true

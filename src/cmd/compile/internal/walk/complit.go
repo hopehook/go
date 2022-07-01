@@ -551,6 +551,9 @@ func anylit(n ir.Node, var_ ir.Node, init *ir.Nodes) {
 		anylit(n.X, var_, init)
 
 	case ir.OSTRUCTLIT, ir.OARRAYLIT:
+		// 在不考虑逃逸分析的情况下，如果数组中元素的个数小于或者等于 4 个，那么所有的变量会直接在栈上初始化，
+		// 如果数组元素大于 4 个，变量就会在 `静态存储区` 初始化然后拷贝到 `栈` 上，
+		// 这些转换后的代码才会继续进入中间代码生成和机器码生成两个阶段，最后生成可以执行的二进制文件。
 		n := n.(*ir.CompLitExpr)
 		if !t.IsStruct() && !t.IsArray() {
 			base.Fatalf("anylit: not struct/array")
