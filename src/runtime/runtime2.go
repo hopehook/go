@@ -1051,9 +1051,12 @@ type _defer struct {
 	// openDefer indicates that this _defer is for a frame with open-coded
 	// defers. We have only one defer record for the entire frame (which may
 	// currently have 0, 1, or more defers active).
+	// 表示当前 defer 是否经过开放编码的优化
+	// 开放编码优化是把 defer 函数展开，插入到了函数末尾执行
 	openDefer bool
 	sp        uintptr // sp at time of defer
 	pc        uintptr // pc at time of defer
+	// fn 是 defer 关键字中传入的函数
 	fn        func()  // can be nil for open-coded defers
 	_panic    *_panic // panic that is running defer
 	link      *_defer // next defer on G; can point to either heap or stack!

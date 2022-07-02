@@ -227,6 +227,9 @@ func panicmemAddr(addr uintptr) {
 
 // Create a new deferred function fn, which has no arguments and results.
 // The compiler turns a defer statement into a call to this.
+// 编译器将 defer 关键字都转换成 runtime.deferproc 函数
+//
+// 负责创建新的延迟调用
 func deferproc(fn func()) {
 	gp := getg()
 	if gp.m.curg != gp {
@@ -238,8 +241,10 @@ func deferproc(fn func()) {
 	if d._panic != nil {
 		throw("deferproc: d.panic != nil after newdefer")
 	}
+	// defer 关键字的插入顺序是从后向前的，而 defer 关键字执行是从前向后的，这也是为什么后调用的 defer 会优先执行。
 	d.link = gp._defer
 	gp._defer = d
+
 	d.fn = fn
 	d.pc = getcallerpc()
 	// We must not be preempted between calling getcallersp and
@@ -253,6 +258,7 @@ func deferproc(fn func()) {
 	// the code the compiler generates always
 	// checks the return value and jumps to the
 	// end of the function if deferproc returns != 0.
+	// runtime.return0 是唯一一个不会触发延迟调用的函数，它可以避免递归 runtime.deferreturn 的递归调用。
 	return0()
 	// No code can go here - the C return register has
 	// been set and must not be clobbered.
@@ -263,6 +269,15 @@ func deferproc(fn func()) {
 // All other fields can contain junk.
 // Nosplit because of the uninitialized pointer fields on the stack.
 //
+// 在 1.13 中对 defer 关键字进行了优化，当该关键字在函数体中最多执行一次时，
+// 编译期间的 cmd/compile/internal/gc.state.call 会将结构体分配到栈上并调用
+//
+// 因为在编译期间我们已经创建了 runtime._defer 结构体，所以在运行期间 runtime.deferprocStack
+// 只需要设置一些未在编译期间初始化的字段，就可以将栈上的 runtime._defer 追加到函数的链表上
+//
+// 除了分配位置的不同，栈上分配和堆上分配的 runtime._defer 并没有本质的不同，
+// 而该方法可以适用于绝大多数的场景，与堆上分配的 runtime._defer 相比，
+// 该方法可以将 defer 关键字的额外开销降低 ~30%。
 //go:nosplit
 func deferprocStack(d *_defer) {
 	gp := getg()
@@ -274,7 +289,7 @@ func deferprocStack(d *_defer) {
 	// The other fields are junk on entry to deferprocStack and
 	// are initialized here.
 	d.started = false
-	d.heap = false
+	d.heap = false  // 栈上分配的 _defer
 	d.openDefer = false
 	d.sp = getcallersp()
 	d.pc = getcallerpc()
@@ -306,6 +321,10 @@ func deferprocStack(d *_defer) {
 // Allocate a Defer, usually using per-P pool.
 // Each defer must be released with freedefer.  The defer is not
 // added to any defer chain yet.
+// 想尽办法获得 runtime._defer 结构体
+//   1. 从调度器的延迟调用缓存池 sched.deferpool 中取出结构体并将该结构体追加到当前 Goroutine 的缓存池中；
+//   2. 从 Goroutine 的延迟调用缓存池 pp.deferpool 中取出结构体；
+//   3. 通过 new 在堆上创建一个新的结构体；
 func newdefer() *_defer {
 	var d *_defer
 	mp := acquirem()
@@ -405,6 +424,10 @@ func freedeferfn() {
 // deferreturn runs deferred functions for the caller's frame.
 // The compiler inserts a call to this at the end of any
 // function which calls defer.
+// 编译器在所有调用 defer 的函数结尾插入了 runtime.deferreturn
+// 负责在函数调用结束时执行所有的延迟调用
+//
+// 从 Goroutine 的 _defer 链表中取出最前面的 runtime._defer 执行，一直循环到链表结束
 func deferreturn() {
 	gp := getg()
 	for {

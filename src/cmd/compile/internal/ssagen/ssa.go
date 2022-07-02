@@ -1462,11 +1462,12 @@ func (s *state) stmt(n ir.Node) {
 			base.WarnfAt(n.Pos(), "%s defer", defertype)
 		}
 		if s.hasOpenDefers {
+			// 开放编码
 			s.openDeferRecord(n.Call.(*ir.CallExpr))
 		} else {
-			d := callDefer
+			d := callDefer // 堆分配(默认的兜底方案)
 			if n.Esc() == ir.EscNever {
-				d = callDeferStack
+				d = callDeferStack  // 栈分配
 			}
 			s.callResult(n.Call.(*ir.CallExpr), d)
 		}
@@ -5036,6 +5037,7 @@ func (s *state) call(n *ir.CallExpr, k callKind, returnResultAddr bool) *ssa.Val
 
 	var call *ssa.Value
 	if k == callDeferStack {
+		// 在栈上初始化 defer 结构体
 		// Make a defer struct d on the stack.
 		if stksize != 0 {
 			s.Fatalf("deferprocStack with non-zero stack size %d: %v", stksize, n)
