@@ -566,13 +566,20 @@ type m struct {
 	// 这里是线程本地存储
 	tls           [tlsSlots]uintptr // thread-local storage (for x86 extern register)
 	mstartfn      func()            // 启动函数
+
 	// 当前运行的 goroutine
 	curg          *g       // current running goroutine // 当前运行的 G
+
 	caughtsig     guintptr // goroutine running during fatal signal
-	p             puintptr // attached p for executing go code (nil if not executing go code) // 绑定 P
-	nextp         puintptr // 临时存放 P
+
+	// 绑定的 P
+	p             puintptr // attached p for executing go code (nil if not executing go code)
+	// 临时存放 P
+	nextp         puintptr
 	oldp          puintptr // the p that was attached before executing a syscall
+
 	id            int64
+
 	mallocing     int32
 	throwing      int32
 	// 该字段不等于空字符串的话，要保持 curg 始终在这个 m 上运行

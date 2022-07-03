@@ -1419,12 +1419,16 @@ func mstart0() {
 		_g_.stack.hi = uintptr(noescape(unsafe.Pointer(&size)))
 		_g_.stack.lo = _g_.stack.hi - size + 1024
 	}
+
+	// 初始化栈 guard，进而可以同时调用 Go 或 C 函数。
+
 	// Initialize stack guard so that we can start calling regular
 	// Go code.
 	_g_.stackguard0 = _g_.stack.lo + _StackGuard
 	// This is the g0, so we can also call go:systemstack
 	// functions, which check stackguard1.
 	_g_.stackguard1 = _g_.stackguard0
+
 	// 调用 mstart1 方法启动 `系统线程` m，进行调度器循环调度。
 	mstart1()
 
@@ -1528,6 +1532,7 @@ func mPark() {
 		// Note, because of signal handling by this parked m,
 		// a preemptive mDoFixup() may actually occur via
 		// mDoFixupAndOSYield(). (See golang.org/issue/44193)
+		// 清除暂止的 note
 		noteclear(&g.m.park)
 		if !mDoFixup() {
 			return
@@ -2288,8 +2293,11 @@ func newm(fn func(), _p_ *p, id int64) {
 	// 创建 m 对象
 	mp := allocm(_p_, fn, id)
 	mp.doesPark = (_p_ != nil)
-	// 暂存 m
+
+	// 设置 p 用于后续绑定
 	mp.nextp.set(_p_)
+
+	// 设置 signal mask
 	mp.sigmask = initSigmask
 	if gp := getg(); gp != nil && gp.m != nil && (gp.m.lockedExt != 0 || gp.m.incgo) && GOOS != "plan9" {
 		// We're on a locked M or a thread that may have been
@@ -2311,6 +2319,7 @@ func newm(fn func(), _p_ *p, id int64) {
 		newmHandoff.newm.set(mp)
 		if newmHandoff.waiting {
 			newmHandoff.waiting = false
+			// 唤醒 m, 自旋到非自旋
 			notewakeup(&newmHandoff.wake)
 		}
 		unlock(&newmHandoff.lock)
@@ -2502,7 +2511,13 @@ func stopm() {
 	// 把 M 放入闲置队列 sched.midle
 	mput(_g_.m)
 	unlock(&sched.lock)
+
+	// 暂停 M，睡眠
 	mPark()
+
+	// 此时已经被唤醒，说明有任务要执行
+	// 立即 acquire P
+	// 因为当前唤醒的 M 主动找工作，所以 acquirep 并不需要创建 M，直接绑定 MP 即可
 	acquirep(_g_.m.nextp.ptr())
 	_g_.m.nextp = 0
 }
@@ -2802,6 +2817,7 @@ func execute(gp *g, inheritTime bool) {
 	}
 
 	// Check whether the profiler needs to be turned on or off.
+	// profiling 相关
 	hz := sched.profilehz
 	if _g_.m.profilehz != hz {
 		setThreadCPUProfiler(hz)
@@ -3442,6 +3458,7 @@ func injectglist(glist *gList) {
 
 // One round of scheduler: find a runnable goroutine and execute it.
 // Never returns.
+// 调度器的一轮：找到 runnable Goroutine 并进行执行且永不返回
 func schedule() {
 	_g_ := getg()
 
@@ -3449,6 +3466,7 @@ func schedule() {
 		throw("schedule: holding locks")
 	}
 
+	// m.lockedg 会在 LockOSThread 下变为非零
 	if _g_.m.lockedg != 0 {
 		stoplockedm()
 		execute(_g_.m.lockedg.ptr(), false) // Never returns.
@@ -3497,6 +3515,7 @@ top:
 			tryWakeP = true
 		}
 	}
+
 	// 进入 GC MarkWorker 工作模式
 	if gp == nil && gcBlackenEnabled != 0 {
 		gp = gcController.findRunnableGCWorker(_g_.m.p.ptr())
@@ -3504,6 +3523,7 @@ top:
 			tryWakeP = true
 		}
 	}
+
 	// 为了确保公平，每处理 n 个任务，就去全局队列获取 G
 	// schedule 中 traceReader 和 gcWorker 优先于一般 goroutine
 	// 比如开启了 trace，gp != nil，这里就不执行
@@ -3511,13 +3531,14 @@ top:
 		// Check the global runnable queue once in a while to ensure fairness.
 		// Otherwise two goroutines can completely occupy the local runqueue
 		// by constantly respawning each other.
-		// 每隔61次调度，尝试从 `全局队列` 获取G
+		// 每隔 61 次调度，尝试从 `全局队列` 获取G
 		if _g_.m.p.ptr().schedtick%61 == 0 && sched.runqsize > 0 {
 			lock(&sched.lock)
 			gp = globrunqget(_g_.m.p.ptr(), 1)
 			unlock(&sched.lock)
 		}
 	}
+
 	// 从 P 本地队列获取 G 任务
 	if gp == nil {
 		gp, inheritTime = runqget(_g_.m.p.ptr())
@@ -3534,10 +3555,14 @@ top:
 		gp, inheritTime = findrunnable() // blocks until work is available
 	}
 
+	// 这个时候一定取到 g 了
+
 	// This thread is going to run a goroutine and is not spinning anymore,
 	// so if it was marked as spinning we need to reset it now and potentially
 	// start a new spinning M.
-	// 如果 M 为非自旋，那么设置为自旋状态
+	// 如果 m 是自旋状态，则
+	//   1. 从自旋到非自旋
+	//   2. 在没有自旋状态的 m 的情况下，再多创建一个新的自旋状态的 m
 	if _g_.m.spinning {
 		resetspinning()
 	}
@@ -3567,6 +3592,9 @@ top:
 	if gp.lockedm != 0 {
 		// Hands off own p to the locked m,
 		// then blocks waiting for a new p.
+		// 如果 g 需要 lock 到 m 上，则会将当前的 p
+		// 给这个要 lock 的 g
+		// 然后阻塞等待一个新的 p
 		startlockedm(gp)
 		goto top
 	}
@@ -3582,10 +3610,19 @@ top:
 // appropriate time. After calling dropg and arranging for gp to be
 // readied later, the caller can do other work but eventually should
 // call schedule to restart the scheduling of goroutines on this m.
+//
+// dropg 移除 m 与当前 Goroutine m->curg（简称 gp ）之间的关联。
+// 通常，调用方将 gp 的状态设置为非 _Grunning 后立即调用 dropg 完成工作。
+// 调用方也有责任在 gp 将使用 ready 时重新启动时进行相关安排。
+// 在调用 dropg 并安排 gp ready 好后，调用者可以做其他工作，但最终应该
+// 调用 schedule 来重新启动此 m 上的 Goroutine 的调度。
 func dropg() {
 	_g_ := getg()
 
+	// setMNoWB 当使用 muintptr 不可行时，在没有 write barrier 下执行 *mp = new
 	setMNoWB(&_g_.m.curg.m, nil)
+
+	// setGNoWB 当使用 guintptr 不可行时，在没有 write barrier 下执行 *gp = new
 	setGNoWB(&_g_.m.curg, nil)
 }
 
@@ -3820,6 +3857,8 @@ func goexit0(gp *g) {
 	if isSystemGoroutine(gp, false) {
 		atomic.Xadd(&sched.ngsys, -1)
 	}
+
+	// 清理
 	gp.m = nil
 	// G 和 M 是否锁定
 	locked := gp.lockedm != 0
@@ -3857,6 +3896,7 @@ func goexit0(gp *g) {
 		print("invalid m->lockedInt = ", _g_.m.lockedInt, "\n")
 		throw("internal lockOSThread error")
 	}
+
 	// 将死亡的 G 放入复用链表
 	gfput(_p_, gp)
 	if locked {
@@ -5321,8 +5361,12 @@ func wirep(_p_ *p) {
 		print("wirep: p->m=", _p_.m, "(", id, ") p->status=", _p_.status, "\n")
 		throw("wirep: invalid p state")
 	}
+
+	// 将执行当前逻辑的 M 和 P 互相引用
 	_g_.m.p.set(_p_)
 	_p_.m.set(_g_.m)
+
+	// 修改 P 的状态
 	_p_.status = _Prunning
 }
 
@@ -5991,7 +6035,7 @@ func globrunqputbatch(batch *gQueue, n int32) {
 func globrunqget(_p_ *p, max int32) *g {
 	assertLockHeld(&sched.lock)
 
-	// 如果全局队列大小为 0
+	// 如果全局队列中没有 g 直接返回
 	if sched.runqsize == 0 {
 		return nil
 	}
@@ -6001,10 +6045,13 @@ func globrunqget(_p_ *p, max int32) *g {
 	if n > sched.runqsize {
 		n = sched.runqsize // 如果 gomaxprocs 为 1
 	}
+
 	// 修正"偷"的数量
+	// 不能超过取的最大个数
 	if max > 0 && n > max {
 		n = max
 	}
+
 	// 最多只能"偷"本地工作队列一半的数量
 	if n > int32(len(_p_.runq))/2 {
 		n = int32(len(_p_.runq)) / 2

@@ -144,6 +144,7 @@ func osinit() {
 func tstart_sysvicall(newm *m) uint32
 
 // May run with m.p==nil, so write barriers are not allowed.
+// 可能在 m.p==nil 情况下运行，因此不允许 write barrier
 //go:nowritebarrier
 func newosproc(mp *m) {
 	var (
