@@ -5570,6 +5570,19 @@ var needSysmonWorkaround bool = false
 //
 // 总是在没有 P 的情况下运行，因此不能出现 `写屏障`
 //
+// 休眠有好几种不同的休眠策略：
+//   - 至少休眠 20us
+//   - 如果抢占 P 和 G 失败次数超过五十、且没有触发 GC，则说明很闲，翻倍休眠
+//   - 如果休眠翻倍时间超过 10ms，保持休眠 10ms 不变
+// 休眠结束后，先观察目前的系统状态，如果正在进行 GC，那么继续休眠。 这时的休眠会被设置超时。
+//
+// 如果没有超时被唤醒，则说明 GC 已经结束，一切都很好，继续做本职工作。 如果超时，则无关 GC，必须开始进行本职善后：
+//   - 如果 cgo 调用被 libc 拦截，继续触发起调用
+//   - 如果已经有 10ms 没有 poll 网络数据，则 poll 一下网络数据
+//   - 抢占在系统调用中阻塞的 P; 抢占已经运行时间过长的 G
+//   - 检查是不是该触发 GC 了
+//   - 如果距离上一次堆清理已经超过了两分半，则执行清理工作
+//
 //go:nowritebarrierrec
 func sysmon() {
 	lock(&sched.lock)
@@ -5587,20 +5600,27 @@ func sysmon() {
 	atomic.Store(&sched.sysmonStarting, 0)
 
 	lasttrace := int64(0)
+
+	// 没有 wokeup 的周期数
 	idle := 0 // how many cycles in succession we had not wokeup somebody
 	delay := uint32(0)
 
 	for {
 		if idle == 0 { // start with 20us sleep...
+			// 每次启动先休眠 20us
 			delay = 20
 		} else if idle > 50 { // start doubling the sleep after 1ms...
+			// 1ms 后就翻倍休眠时间
 			delay *= 2
 		}
+
+		// 增加休眠时间到 10ms
 		if delay > 10*1000 { // up to 10ms
 			delay = 10 * 1000
 		}
 		// 休眠 delay us
 		usleep(delay)
+
 		mDoFixup()
 
 		// sysmon should not enter deep sleep if schedtrace is enabled so that
@@ -5618,6 +5638,8 @@ func sysmon() {
 		// application starts work again. It does not reset idle when waking
 		// from a timer to avoid adding system load to applications that spend
 		// most of their time sleeping.
+		//
+		// 如果在 STW，则暂时休眠
 		now := nanotime()
 		if debug.schedtrace <= 0 && (sched.gcwaiting != 0 || atomic.Load(&sched.npidle) == uint32(gomaxprocs)) {
 			lock(&sched.lock)
@@ -5629,6 +5651,7 @@ func sysmon() {
 					unlock(&sched.lock)
 					// Make wake-up period small enough
 					// for the sampling to be correct.
+					// 确保 wake-up 周期足够小从而进行正确的采样
 					sleep := forcegcperiod / 2
 					if next-now < sleep {
 						sleep = next - now
@@ -5663,9 +5686,11 @@ func sysmon() {
 		if *cgo_yield != nil {
 			asmcgocall(*cgo_yield, nil)
 		}
+
 		// poll network if not polled for more than 10ms
+		//
 		// 如果超过10ms都没进行 netpoll ，那么强制执行一次 netpoll，
-		// 并且如果获取到了可运行的 G，那么插入全局列表。
+		// 并且如果获取到了可运行的 G，那么插入 `全局列表`。
 		lastpoll := int64(atomic.Load64(&sched.lastpoll))
 		if netpollinited() && lastpoll != 0 && lastpoll+10*1000*1000 < now {
 			atomic.Cas64(&sched.lastpoll, uint64(lastpoll), uint64(now))
@@ -5678,6 +5703,11 @@ func sysmon() {
 				// another M returns from syscall, finishes running its G,
 				// observes that there is no work to do and no other running M's
 				// and reports deadlock.
+				//
+				// 需要在插入 g 列表前减少空闲锁住的 m 的数量（假装有一个正在运行）
+				// 否则会导致这些情况：
+				// injectglist 会绑定所有的 p，但是在它开始 M 运行 P 之前，另一个 M 从 syscall 返回，
+				// 完成运行它的 G ，注意这时候没有 work 要做，且没有其他正在运行 M 的死锁报告。
 				incidlelocked(-1)
 				injectglist(&list)
 				incidlelocked(1)
@@ -5719,8 +5749,10 @@ func sysmon() {
 			idle++
 		}
 		// check if we need to force a GC
+		// 检查是否需要强制触发 GC
+		//
 		// 这段代码核心的行为就是不断地在 for 循环中，对 gcTriggerTime 和 now 变量进行比较，判断是否达到一定的时间(默认为 2 分钟)。
-		// 若达到意味着满足条件，会将 forcegc.g 放到全局队列中接受新的一轮调度，再进行对 forcegchelper 的唤醒。
+		// 若达到意味着满足条件，会将 forcegc.g 放到 `全局队列` 中接受新的一轮调度，再进行对 forcegchelper 的唤醒。
 		if t := (gcTrigger{kind: gcTriggerTime, now: now}); t.test() && atomic.Load(&forcegc.idle) != 0 {
 			lock(&forcegc.lock)
 			forcegc.idle = 0
