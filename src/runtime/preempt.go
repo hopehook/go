@@ -302,6 +302,10 @@ func canPreemptM(mp *m) bool {
 // frame and its parent frame conservatively.
 //
 // asyncPreempt is implemented in assembly.
+//
+// asyncPreempt 保存了所有用户寄存器，并调用 asyncPreempt2
+//
+// 当栈扫描遭遇 asyncPreempt 栈帧时，将会保守的扫描调用方栈帧
 func asyncPreempt()
 
 //go:nosplit
@@ -313,6 +317,7 @@ func asyncPreempt2() {
 	} else {
 		mcall(gopreempt_m)
 	}
+	// 异步抢占过程结束
 	gp.asyncSafePoint = false
 }
 

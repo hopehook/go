@@ -5567,12 +5567,19 @@ var needSysmonWorkaround bool = false
 // sysmon 执行一个无限循环，一开始每次循环休眠 20us，之后（1 ms 后）每次休眠时间倍增，最终每一轮都会休眠 10ms。
 //
 // sysmon 中会进行 netpool（获取 fd 事件）、retake（抢占）、forcegc（按时间强制执行 gc），scavenge heap（释放自由列表中多余的项减少内存占用）等处理。
+//
+// 总是在没有 P 的情况下运行，因此不能出现 `写屏障`
+//
 //go:nowritebarrierrec
 func sysmon() {
 	lock(&sched.lock)
+
+	// 不计入死锁的系统 m 的数量
 	sched.nmsys++
-	// 判断程序是否死锁
+
+	// 检查程序是否发生了死锁
 	checkdead()
+
 	unlock(&sched.lock)
 
 	// For syscall_runtime_doAllThreadsSyscall, sysmon is

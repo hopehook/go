@@ -340,6 +340,11 @@ func doSigPreempt(gp *g, ctxt *sigctxt) {
 	if wantAsyncPreempt(gp) {
 		if ok, newpc := isAsyncSafePoint(gp, ctxt.sigpc(), ctxt.sigsp(), ctxt.siglr()); ok {
 			// Adjust the PC and inject a call to asyncPreempt.
+			// 插入抢占调用
+			//
+			// 在 ctxt.pushCall 之前， ctxt.rip() 和 ctxt.rep() 都保存了被中断的 Goroutine 所在的位置，
+			// 但是 pushCall 直接修改了这些寄存器，进而当从 sighandler 返回用户态 Goroutine 时，
+			// 能够从注入的 asyncPreempt 开始执行
 			ctxt.pushCall(abi.FuncPCABI0(asyncPreempt), newpc)
 		}
 	}
@@ -361,6 +366,10 @@ const preemptMSupported = true
 // marked for preemption and the goroutine is at an asynchronous
 // safe-point, it will preempt the goroutine. It always atomically
 // increments mp.preemptGen after handling a preemption request.
+//
+// preemptM 向 mp 发送抢占请求。该请求可以异步处理，也可以与对 M 的其他请求合并。
+// 接收到该请求后，如果正在运行的 G 或 P 被标记为抢占，并且 Goroutine 处于异步安全点，
+// 它将抢占 Goroutine。在处理抢占请求后，它始终以原子方式递增 mp.preemptGen。
 func preemptM(mp *m) {
 	// On Darwin, don't try to preempt threads during exec.
 	// Issue #41702.
@@ -603,6 +612,11 @@ var testSigusr1 func(gp *g) bool
 //
 // The garbage collector may have stopped the world, so write barriers
 // are not allowed.
+//
+// Go 运行时进行信号处理的基本做法，其核心是注册 sighandler 函数，并在信号到达后，
+// 由操作系统中断转入内核空间，而后将所中断线程的执行上下文参数（例如寄存器 rip, rep 等） 传递给处理函数。
+// 如果在 sighandler 中修改了这个上下文参数，操作系统则会根据修改后的 上下文信息恢复执行，
+// 这也就为抢占提供了机会。
 //
 //go:nowritebarrierrec
 func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
