@@ -2288,6 +2288,9 @@ var newmHandoff struct {
 // May run with m.p==nil, so write barriers are not allowed.
 //
 // id is optional pre-allocated m ID. Omit by passing -1.
+// 创建一个新的 m. 它会启动并调用 fn 或调度器
+// fn 必须是静态、非堆上分配的闭包
+// 它可能在 m.p==nil 时运行，因此不允许 write barrier
 //go:nowritebarrierrec
 func newm(fn func(), _p_ *p, id int64) {
 	// 创建 m 对象
@@ -2359,6 +2362,9 @@ func newm1(mp *m) {
 // running.
 //
 // The calling thread must itself be in a known-good state.
+// 如果模板线程尚未运行，则startTemplateThread将启动它。
+//
+// 调用线程本身必须处于已知良好状态。
 func startTemplateThread() {
 	if GOARCH == "wasm" { // no threads on wasm yet
 		return
@@ -2461,6 +2467,7 @@ func mDoFixupAndOSYield() {
 // templateThread runs on an M without a P, so it must not have write
 // barriers.
 //
+// 模板线程本身不会退出，只会在需要的时，创建 m
 //go:nowritebarrierrec
 func templateThread() {
 	lock(&sched.lock)
@@ -3468,6 +3475,10 @@ func schedule() {
 
 	// m.lockedg 会在 LockOSThread 下变为非零
 	if _g_.m.lockedg != 0 {
+		// 调度循环在发现当前的 m 存在请求锁住执行的 g 时，不会进入后续 g 的偷取过程，
+		// 相反会直接调用 stoplockedm，将当前的 m 和 p 解绑，并 park 当前的 m，
+		// 直到可以再次调度 lockedg 为止，获取 p 并通过 execute 直接调度 lockedg ，
+		// 从而再次进入调度循环
 		stoplockedm()
 		execute(_g_.m.lockedg.ptr(), false) // Never returns.
 	}
@@ -4770,12 +4781,15 @@ func Breakpoint() {
 // dolockOSThread is called by LockOSThread and lockOSThread below
 // after they modify m.locked. Do not allow preemption during this call,
 // or else the m might be different in this function than in the caller.
+// dolockOSThread 在修改 m.locked 后由 LockOSThread 和 lockOSThread 调用。
+// 在此调用期间不允许抢占，否则此函数中的 m 可能与调用者中的 m 不同。
 //go:nosplit
 func dolockOSThread() {
 	if GOARCH == "wasm" {
 		return // no threads on wasm yet
 	}
 	_g_ := getg()
+	// lockedg, lockedm 相互绑定
 	_g_.m.lockedg.set(_g_)
 	_g_.lockedm.set(_g_.m)
 }
@@ -4830,6 +4844,7 @@ func dounlockOSThread() {
 	if _g_.m.lockedInt != 0 || _g_.m.lockedExt != 0 {
 		return
 	}
+	// lockedg, lockedm 清零
 	_g_.m.lockedg = 0
 	_g_.lockedm = 0
 }
