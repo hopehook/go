@@ -267,6 +267,9 @@ func setsig(i uint32, fn uintptr) {
 	var sa sigactiont
 	sa.sa_flags = _SA_SIGINFO | _SA_ONSTACK | _SA_RESTART
 	sa.sa_mask = sigset_all
+
+	// 值得注意的是这里有一个特殊处理，当 fn 为 sighandler 时候，
+	// 产生信号后的动作并非直接调用 sighandler，而是被替换为了 sigtramp
 	if fn == abi.FuncPCABIInternal(sighandler) { // abi.FuncPCABIInternal(sighandler) matches the callers in signal_unix.go
 		fn = uintptr(unsafe.Pointer(&sigtramp))
 	}

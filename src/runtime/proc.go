@@ -845,7 +845,9 @@ func mcommoninit(mp *m, id int64) {
 	// cputicks is not very random in startup virtual machine
 	mp.fastrand = uint64(int64Hash(uint64(mp.id), fastrandseed^uintptr(cputicks())))
 
+	// 初始化 gsignal，用于处理 m 上的信号。
 	mpreinit(mp)
+	// gsignal 的运行栈边界处理
 	if mp.gsignal != nil {
 		mp.gsignal.stackguard1 = mp.gsignal.stack.lo + _StackGuard
 	}
@@ -1506,10 +1508,14 @@ func mstartm0() {
 	// Create an extra M for callbacks on threads not created by Go.
 	// An extra M is also needed on Windows for callbacks created by
 	// syscall.NewCallback. See issue #6751 for details.
+	//
+	// 创建一个额外的 M 服务 non-Go 线程（cgo 调用中产生的线程）的回调，并且只创建一个
+	// windows 上也需要额外 M 来服务 syscall.NewCallback 产生的回调，见 issue #6751
 	if (iscgo || GOOS == "windows") && !cgoHasExtraM {
 		cgoHasExtraM = true
 		newextram()
 	}
+	// 初始化信号 handler
 	initsig(false)
 }
 
@@ -2092,6 +2098,9 @@ var earlycgocallback = []byte("fatal error: cgo callback before cgo call\n")
 // newextram allocates m's and puts them on the extra list.
 // It is called with a working local m, so that it can do things
 // like call schedlock and allocate.
+//
+// newextram 分配一个 m 并将其放入 extra 列表中
+// 它会被工作中的本地 m 调用，因此它能够做一些调用 schedlock 和 allocate 类似的事情。
 func newextram() {
 	c := atomic.Xchg(&extraMWaiters, 0)
 	if c > 0 {
@@ -2100,6 +2109,7 @@ func newextram() {
 		}
 	} else {
 		// Make sure there is at least one extra M.
+		// 确保至少有一个额外的 M
 		mp := lockextra(true)
 		unlockextra(mp)
 		if mp == nil {
@@ -2109,6 +2119,7 @@ func newextram() {
 }
 
 // oneNewExtraM allocates an m and puts it on the extra list.
+// onNewExtraM 分配一个 m 并将其放入 extra list 中
 func oneNewExtraM() {
 	// Create extra goroutine locked to extra m.
 	// The goroutine is the context in which the cgo callback will run.
@@ -2149,6 +2160,7 @@ func oneNewExtraM() {
 	atomic.Xadd(&sched.ngsys, +1)
 
 	// Add m to the extra list.
+	// 将 m 添加到 extra m 链表中
 	mnext := lockextra(true)
 	mp.schedlink.set(mnext)
 	extraMCount++
@@ -2214,8 +2226,8 @@ func getm() uintptr {
 	return uintptr(unsafe.Pointer(getg().m))
 }
 
-var extram uintptr
-var extraMCount uint32 // Protected by lockextra
+var extram uintptr     // 额外线程链表
+var extraMCount uint32 // Protected by lockextra  // 额外线程 数量
 var extraMWaiters uint32
 
 // lockextra locks the extra list and returns the list head.

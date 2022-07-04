@@ -63,8 +63,15 @@ type sigset struct{}
 
 // Called to initialize a new m (including the bootstrap m).
 // Called on the parent thread (main thread in case of bootstrap), can allocate memory.
+// 初始化 gsignal，用于处理 m 上的信号。
+// 从一个父线程上进行调用（引导时为主线程），可以分配内存
+//
+// 为一个 M 创建 gsignal，是一个在 M 上用于处理信号的 Goroutine。
+// 因此，除了 g0 外，其实第一个创建的 g 应该是它， 但是它并没有设置 Goid (Goroutine ID)
 func mpreinit(mp *m) {
+	// OS X 需要 >= 8K，此处创建处理 singnal 的 g
 	mp.gsignal = malg(32 * 1024)
+	// 指定 gsignal 拥有的 m
 	mp.gsignal.m = mp
 }
 

@@ -13,6 +13,7 @@ import (
 var handlers struct {
 	sync.Mutex
 	// Map a channel to the signals that should be sent to it.
+	// 将信号 channel 注册到这里，映射对应的 handler
 	m map[chan<- os.Signal]*handler
 	// Map a signal to the number of channels receiving it.
 	ref [numSig]int64
@@ -229,6 +230,7 @@ func Stop(c chan<- os.Signal) {
 // Defined by the runtime package.
 func signalWaitUntilIdle()
 
+// 当接受到 runtime 透传的信号后，信号 sig 会被发送到用户在 Ignore/Notify/Stop 上所注册的 channel 上
 func process(sig os.Signal) {
 	n := signum(sig)
 	if n < 0 {

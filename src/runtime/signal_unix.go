@@ -108,6 +108,7 @@ var signalsOK bool
 
 // Initialize signals.
 // Called by libpreinit so runtime may not be initialized.
+// 初始化信号
 //go:nosplit
 //go:nowritebarrierrec
 func initsig(preinit bool) {
@@ -128,13 +129,16 @@ func initsig(preinit bool) {
 			continue
 		}
 
+		// 此时不需要原子操作，因为此时没有其他运行的 Goroutine
 		// We don't need to use atomic operations here because
 		// there shouldn't be any other goroutines running yet.
 		fwdSig[i] = getsig(i)
 
+		// 检查该信号是否需要设置 signal handler
 		if !sigInstallGoHandler(i) {
 			// Even if we are not installing a signal handler,
 			// set SA_ONSTACK if necessary.
+			// 即使不设置 signal handler，在必要时设置 SA_ONSTACK
 			if fwdSig[i] != _SIG_DFL && fwdSig[i] != _SIG_IGN {
 				setsigstack(i)
 			} else if fwdSig[i] == _SIG_IGN {
@@ -144,6 +148,7 @@ func initsig(preinit bool) {
 		}
 
 		handlingSig[i] = 1
+		// 对于一个需要设置 sighandler 的信号，会通过 setsig 来设置信号对应的动作（action）
 		setsig(i, abi.FuncPCABIInternal(sighandler))
 	}
 }
@@ -420,6 +425,8 @@ func sigFetchG(c *sigctxt) *g {
 //go:nosplit
 //go:nowritebarrierrec
 func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
+	// sigfwdgo 用于约定该信号是否应该由 Go 进行处理，
+	// 如果不由 Go 进行处理（例如 cgo）则将其转发到 Go 代码之前设置的 handler 上。
 	if sigfwdgo(sig, info, ctx) {
 		return
 	}
@@ -453,6 +460,7 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 		return
 	}
 
+	// 将 g 设置为 gsignal
 	setg(g.m.gsignal)
 
 	// If some non-Go code called sigaltstack, adjust.
@@ -467,7 +475,10 @@ func sigtrampgo(sig uint32, info *siginfo, ctx unsafe.Pointer) {
 	}
 
 	c.fixsigcode(sig)
+
+	// 真正调用 sighandler 处理信号的地方
 	sighandler(sig, info, ctx, g)
+
 	setg(g)
 	if setStack {
 		restoreGsignalStack(&gsignalStack)
@@ -598,6 +609,7 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 	_g_ := getg()
 	c := &sigctxt{info, ctxt}
 
+	// profile 时钟超时
 	if sig == _SIGPROF {
 		mp := _g_.m
 		// Some platforms (Linux) have per-thread timers, which we use in
@@ -612,13 +624,19 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		return
 	}
 
+	// 用户信号
 	if sig == _SIGUSR1 && testSigusr1 != nil && testSigusr1(gp) {
 		return
 	}
 
+	// 信号式抢占的入口
 	if sig == sigPreempt && debug.asyncpreemptoff == 0 {
 		// Might be a preemption signal.
+		// 可能是一个抢占信号
 		doSigPreempt(gp, c)
+		// 即便这是一个抢占信号，它也可能与其他信号进行混合，因此我们
+		// 继续进行处理。
+		//
 		// Even if this was definitely a preemption signal, it
 		// may have been coalesced with another signal, so we
 		// still let it through to the application.
@@ -639,6 +657,7 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		flags = _SigThrow
 	}
 	if c.sigcode() != _SI_USER && flags&_SigPanic != 0 {
+		// 产生 panic 的信号
 		// The signal is going to cause a panic.
 		// Arrange the stack so that it looks like the point
 		// where the signal occurred made a call to the
@@ -656,16 +675,19 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 		return
 	}
 
+	// 对用户注册的信号进行转发
 	if c.sigcode() == _SI_USER || flags&_SigNotify != 0 {
 		if sigsend(sig) {
 			return
 		}
 	}
 
+	// 设置为可忽略的用户信号
 	if c.sigcode() == _SI_USER && signal_ignored(sig) {
 		return
 	}
 
+	// 处理 KILL 信号
 	if flags&_SigKill != 0 {
 		dieFromSignal(sig)
 	}
@@ -677,6 +699,10 @@ func sighandler(sig uint32, info *siginfo, ctxt unsafe.Pointer, gp *g) {
 	if flags&(_SigThrow|_SigPanic) == 0 {
 		return
 	}
+
+
+	// 下面是处理一些直接 panic 的情况
+
 
 	_g_.m.throwing = 1
 	_g_.m.caughtsig.set(gp)
@@ -1152,7 +1178,10 @@ func unblocksig(sig uint32) {
 // minitSignals is called when initializing a new m to set the
 // thread's alternate signal stack and signal mask.
 func minitSignals() {
+	// 初始化信号栈 Signal Stack
 	minitSignalStack()
+
+	// 初始化信号屏蔽字
 	minitSignalMask()
 }
 
@@ -1166,14 +1195,26 @@ func minitSignals() {
 // signal stack to the gsignal stack if cgo is not used (regardless
 // of whether it is already set). Record which choice was made in
 // newSigstack, so that it can be undone in unminit.
+//
+// 如果没有为线程设置备用信号栈（正常情况），则将备用信号栈设置为 gsignal 栈。
+// 如果为线程设置了备用信号栈（非 Go 线程设置备用信号栈然后调用 Go 函数的情况），
+// 则将 gsignal 栈设置为备用信号栈。
+// 如果没有使用 cgo 我们还设置了额外的 gsignal 信号栈（无论其是否已经被设置）
+// 记录在 newSigstack 中做出的选择，
+// 以便可以在 unminit 中撤消。
 func minitSignalStack() {
 	_g_ := getg()
+
+	// 获取原有的信号栈
 	var st stackt
 	sigaltstack(nil, &st)
+
 	if st.ss_flags&_SS_DISABLE != 0 || !iscgo {
+		// 如果禁用了当前的信号栈，则将 gsignal 的执行栈设置为备用信号栈
 		signalstack(&_g_.m.gsignal.stack)
 		_g_.m.newSigstack = true
 	} else {
+		// 否则将 m 的 gsignal 栈设置为从 sigaltstack 返回的备用信号栈
 		setGsignalStack(&st, &_g_.m.goSigStack)
 		_g_.m.newSigstack = false
 	}
@@ -1189,11 +1230,16 @@ func minitSignalStack() {
 // After this is called the thread can receive signals.
 func minitSignalMask() {
 	nmask := getg().m.sigmask
+
+	// 遍历整个信号表
 	for i := range sigtable {
+		// 判断某个信号是否为不可阻止的信号，
+		// 如果是不可阻止的信号，则删除对应的屏蔽字所在位
 		if !blockableSig(uint32(i)) {
 			sigdelset(&nmask, i)
 		}
 	}
+	// 重新设置屏蔽字
 	sigprocmask(_SIG_SETMASK, &nmask, nil)
 }
 
@@ -1223,6 +1269,11 @@ func unminitSignals() {
 // for all running threads to block them and delay their delivery until
 // we start a new thread. When linked into a C program we let the C code
 // decide on the disposition of those signals.
+//
+// 判断某个信号是否为不可阻止的信号
+// 1. 当信号是非阻塞信号，则不可阻止
+// 2. 当改程序为模块时，则可阻止
+// 3. 当信号为 Kill 或 Throw 时，可阻止，否则不可阻止
 func blockableSig(sig uint32) bool {
 	flags := sigtable[sig].flags
 	if flags&_SigUnblock != 0 {
@@ -1248,6 +1299,9 @@ type gsignalStack struct {
 // It saves the old values in *old for use by restoreGsignalStack.
 // This is used when handling a signal if non-Go code has set the
 // alternate signal stack.
+// setGsignalStack 将当前 m 的 gsignal 栈设置为从 sigaltstack 系统调用返回的备用信号栈。
+// 它将旧值保存在 *old 中以供 restoreGsignalStack 使用。
+// 如果非 Go 代码设置了，则在处理信号时使用备用栈。
 //go:nosplit
 //go:nowritebarrierrec
 func setGsignalStack(st *stackt, old *gsignalStack) {
@@ -1278,6 +1332,7 @@ func restoreGsignalStack(st *gsignalStack) {
 }
 
 // signalstack sets the current thread's alternate signal stack to s.
+// 将 s 设置为备用信号栈，此方法仅在信号栈被禁用时调用
 //go:nosplit
 func signalstack(s *stack) {
 	st := stackt{ss_size: s.hi - s.lo}

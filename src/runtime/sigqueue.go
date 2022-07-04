@@ -142,6 +142,8 @@ func sigRecvPrepareForFixup() {
 
 // Called to receive the next queued signal.
 // Must only be called from a single goroutine at a time.
+//
+// 从信号队列中接受信号
 //go:linkname signal_recv os/signal.signal_recv
 func signal_recv() uint32 {
 	for {
@@ -219,6 +221,7 @@ func signalWaitUntilIdle() {
 }
 
 // Must only be called from a single goroutine at a time.
+// 启用运行时信号队列
 //go:linkname signal_enable os/signal.signal_enable
 func signal_enable(s uint32) {
 	if !sig.inuse {
