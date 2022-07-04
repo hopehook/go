@@ -402,6 +402,9 @@ type libcall struct {
 // The bounds of the stack are exactly [lo, hi),
 // with no implicit data structures on either side.
 // 描述栈的数据结构，栈的范围：[lo, hi)
+//
+// stack 描述了 Goroutine 的执行栈，栈的区间为 [lo, hi)，在栈两边没有任何隐式数据结构
+// 因此 Go 的执行栈由运行时管理，本质上分配在堆中，比 ulimit -s 大
 type stack struct {
 	lo uintptr  // 栈顶，低地址
 	hi uintptr  // 栈底，高地址
@@ -425,7 +428,15 @@ type g struct {
 	stack       stack   // offset known to runtime/cgo
 
 	// 用于栈的扩张和收缩检查，抢占标志
+	//
+	// stackguard0 是对比 Go 栈增长的 prologue 的栈指针
+	// 如果 sp 寄存器比 stackguard0 小（由于栈往低地址方向增长），会触发栈拷贝和调度
+	// 通常情况下：stackguard0 = stack.lo + StackGuard，但被抢占时会变为 StackPreempt
 	stackguard0 uintptr // offset known to liblink
+
+	// stackguard1 是对比 C 栈增长的 prologue 的栈指针
+	// 当位于 g0 和 gsignal 栈上时，值为 stack.lo + StackGuard
+	// 在其他栈上值为 ~0 用于触发 morestackc (并 crash) 调用
 	stackguard1 uintptr // offset known to liblink
 
 	_panic    *_panic // innermost panic - offset known to liblink
@@ -433,7 +444,9 @@ type g struct {
 
 	// 当前绑定的 m
 	m         *m      // current m; offset known to arm liblink
-	sched     gobuf   // goroutine 切换时，用于保存 g 的上下文
+
+	// 切换时，用于保存 g 的上下文
+	sched     gobuf   // goroutine
 	syscallsp uintptr // if status==Gsyscall, syscallsp = sched.sp to use during gc
 	syscallpc uintptr // if status==Gsyscall, syscallpc = sched.pc to use during gc
 	stktopsp  uintptr // expected sp at top of stack, to check in traceback

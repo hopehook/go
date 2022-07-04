@@ -562,6 +562,7 @@ bad:
 // record an argument size. For that purpose, it has no arguments.
 TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	// Cannot grow scheduler stack (m->g0).
+	// 无法增长调度器的栈(m->g0)
 	get_tls(CX)
 	MOVQ	g(CX), BX
 	MOVQ	g_m(BX), BX
@@ -572,6 +573,7 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	CALL	runtime·abort(SB)
 
 	// Cannot grow signal stack (m->gsignal).
+	// 无法增长信号栈 (m->gsignal)
 	MOVQ	m_gsignal(BX), SI
 	CMPQ	g(CX), SI
 	JNE	3(PC)
@@ -598,6 +600,7 @@ TEXT runtime·morestack(SB),NOSPLIT,$0-0
 	MOVQ	DX, (g_sched+gobuf_ctxt)(SI)
 
 	// Call newstack on m->g0's stack.
+	// 在 m->g0 栈上调用 newstack.
 	MOVQ	m_g0(BX), BX
 	MOVQ	BX, g(CX)
 	MOVQ	(g_sched+gobuf_sp)(BX), SP

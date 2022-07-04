@@ -283,6 +283,12 @@ func resumeG(state suspendGState) {
 //
 // It is nosplit because it has nosplit callers.
 //
+// canPreemptM 验证了可以被抢占的条件：
+
+//  1. 运行时没有禁止抢占（m.locks == 0）
+//  2. 运行时没有在执行内存分配（m.mallocing == 0）
+//  3. 运行时没有关闭抢占机制（m.preemptoff == ""）
+//  4. M 与 P 绑定且没有进入系统调用（p.status == _Prunning）
 //go:nosplit
 func canPreemptM(mp *m) bool {
 	return mp.locks == 0 && mp.mallocing == 0 && mp.preemptoff == "" && mp.p.ptr().status == _Prunning

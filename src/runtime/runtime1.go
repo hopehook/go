@@ -468,6 +468,8 @@ func timediv(v int64, div int32, rem *int32) int32 {
 //go:nosplit
 func acquirem() *m {
 	_g_ := getg()
+
+	// 禁止抢占，因为它可以在局部变量中保存 p
 	_g_.m.locks++
 	return _g_.m
 }

@@ -333,6 +333,9 @@ func forcegchelper() {
 
 // Gosched yields the processor, allowing other goroutines to run. It does not
 // suspend the current goroutine, so execution resumes automatically.
+//
+// Gosched 会让出当前的 P，并允许其他 Goroutine 运行。
+//
 // 可被用户调用的 runtime.Gosched 将当前 G 任务暂停，重新放回全局队列，让出当前 M 去执行其他任务。
 // 我们无需对 G 做唤醒操作，因为总会被某个 M 重新拿到，并从 "断点" 恢复任务
 func Gosched() {
@@ -894,6 +897,7 @@ func ready(gp *g, traceskip int, next bool) {
 
 	// status is Gwaiting or Gscanwaiting, make Grunnable and put on runq
 	casgstatus(gp, _Gwaiting, _Grunnable)
+
 	// 会被放入 P.runnext，最高优先级执行
 	runqput(_g_.m.p.ptr(), gp, next)
 	wakep()
@@ -3769,6 +3773,8 @@ func goschedImpl(gp *g) {
 }
 
 // Gosched continuation on g0.
+//
+// Gosched 在 g0 上继续执行
 func gosched_m(gp *g) {
 	if trace.enabled {
 		traceGoSched()
@@ -3789,6 +3795,7 @@ func goschedguarded_m(gp *g) {
 	goschedImpl(gp)
 }
 
+// 与 gosched_m 一致
 func gopreempt_m(gp *g) {
 	if trace.enabled {
 		traceGoPreempt()
@@ -4482,12 +4489,21 @@ func syscall_runtime_AfterExec() {
 func malg(stacksize int32) *g {
 	newg := new(g)
 	if stacksize >= 0 {
+		// 将 stacksize 舍入为 2 的指数，目的是为了消除 _StackSystem 对栈的影响
+		// 在 Linux/Darwin 上（ _StackSystem == 0 ）本行不改变 stacksize 的大小
 		stacksize = round2(_StackSystem + stacksize)
+
+
 		systemstack(func() {
+			// 执行栈本身是通过 stackalloc 来进行分配。
 			newg.stack = stackalloc(uint32(stacksize))
 		})
+
+		// stackguard0 不出所料的被设置为了 stack.lo + _StackGuard
 		newg.stackguard0 = newg.stack.lo + _StackGuard
+		// stackguard1 则为 ~0。
 		newg.stackguard1 = ^uintptr(0)
+
 		// Clear the bottom word of the stack. We record g
 		// there on gsignal stack during VDSO on ARM and ARM64.
 		*(*uintptr)(unsafe.Pointer(newg.stack.lo)) = 0
@@ -4541,6 +4557,9 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 	newg := gfget(_p_)
 
 	// 获取失败， 新建 G 对象
+	//
+	// 初始化阶段，gfget 是不可能找到 g 的
+	// 也可能运行中本来就已经耗尽了
 	if newg == nil {
 		// 新建 G 对象
 		newg = malg(_StackMin)
@@ -5724,9 +5743,12 @@ const forcePreemptNS = 10 * 1000 * 1000 // 10ms
 
 func retake(now int64) uint32 {
 	n := 0
+
 	// Prevent allp slice changes. This lock will be completely
 	// uncontended unless we're already stopping the world.
+	// 防止 allp 数组发生变化，除非我们已经 STW，此锁将完全没有人竞争
 	lock(&allpLock)
+
 	// We can't use a range loop over allp because we may
 	// temporarily drop the allpLock. Hence, we need to re-fetch
 	// allp each time around the loop.
