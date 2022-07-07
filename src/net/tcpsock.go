@@ -350,10 +350,12 @@ func (l *TCPListener) File() (f *os.File, err error) {
 // chosen.
 func ListenTCP(network string, laddr *TCPAddr) (*TCPListener, error) {
 	switch network {
+	// 支持 tcp 协议为 ”tcp4“ 和 “tcp6”，当使用 "tcp" 时可以通过地址格式进行判断
 	case "tcp", "tcp4", "tcp6":
 	default:
 		return nil, &OpError{Op: "listen", Net: network, Source: nil, Addr: laddr.opAddr(), Err: UnknownNetworkError(network)}
 	}
+	// 对 laddr 进行初始化(非 nil),用于在 socket 函数中进入监听处理流程(见下文)
 	if laddr == nil {
 		laddr = &TCPAddr{}
 	}

@@ -33,6 +33,7 @@ func (fd *netFD) setAddr(laddr, raddr Addr) {
 }
 
 func (fd *netFD) Close() error {
+	// 与GC相关的设置
 	runtime.SetFinalizer(fd, nil)
 	return fd.pfd.Close()
 }

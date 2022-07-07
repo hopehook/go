@@ -16,10 +16,12 @@ import (
 // socket returns a network file descriptor that is ready for
 // asynchronous I/O using the network poller.
 func socket(ctx context.Context, net string, family, sotype, proto int, ipv6only bool, laddr, raddr sockaddr, ctrlFn func(string, string, syscall.RawConn) error) (fd *netFD, err error) {
+	// 创建一个socket
 	s, err := sysSocket(family, sotype, proto)
 	if err != nil {
 		return nil, err
 	}
+	// 设置socket选项，处理IPv6并设置允许广播
 	if err = setDefaultSockopts(s, family, sotype, ipv6only); err != nil {
 		poll.CloseFunc(s)
 		return nil, err
@@ -51,17 +53,19 @@ func socket(ctx context.Context, net string, family, sotype, proto int, ipv6only
 	// from stream or datagram listeners when laddr is not nil but
 	// raddr is nil. Otherwise we assume it's just for dialers or
 	// the other connection holders.
-
+	// 用于处理 TCP 或 UDP 服务端。服务端需要确保本地监听地址非 nil(但可以为"")，否则会被认为是一个客户端 socket。ListenTCP 中已经对 laddr 赋初值
 	if laddr != nil && raddr == nil {
 		switch sotype {
+		// 处理流协议，TCP
 		case syscall.SOCK_STREAM, syscall.SOCK_SEQPACKET:
 			// 对 listener fd 进行 bind&listen 操作，并且调用 init 方法完成初始化
 			if err := fd.listenStream(laddr, listenerBacklog(), ctrlFn); err != nil {
+				// listenStream 失败后需要关闭 fd.pfd 和 fd.Sysfd
 				fd.Close()
 				return nil, err
 			}
 			return fd, nil
-		case syscall.SOCK_DGRAM:
+		case syscall.SOCK_DGRAM: // 处理数据报协议，UDP
 			if err := fd.listenDatagram(laddr, ctrlFn); err != nil {
 				fd.Close()
 				return nil, err
@@ -69,6 +73,7 @@ func socket(ctx context.Context, net string, family, sotype, proto int, ipv6only
 			return fd, nil
 		}
 	}
+	// 处理非监听 socket 场景，即客户端发起连接
 	if err := fd.dial(ctx, laddr, raddr, ctrlFn); err != nil {
 		fd.Close()
 		return nil, err
@@ -176,13 +181,16 @@ func (fd *netFD) dial(ctx context.Context, laddr, raddr sockaddr, ctrlFn func(st
 
 func (fd *netFD) listenStream(laddr sockaddr, backlog int, ctrlFn func(string, string, syscall.RawConn) error) error {
 	var err error
+	// 此处设置了监听 socket 所使用的选项，允许地址 socket 重用，实际中并不推荐使用 socket 地址重用。
 	if err = setDefaultListenerSockopts(fd.pfd.Sysfd); err != nil {
 		return err
 	}
 	var lsa syscall.Sockaddr
+	// 构建一个实现了 syscall.Sockaddr 结构的结构体，如 syscall.SockaddrInet4/syscall.SockaddrInet4/syscall.SockaddrUnix
 	if lsa, err = laddr.sockaddr(fd.family); err != nil {
 		return err
 	}
+	// ctrlFn 在 bind 前调用，可以用于设置 socket 选项。此处为 nil。用法可以参考 net/listen_test.go 中的 TestListenConfigControl 函数
 	if ctrlFn != nil {
 		c, err := newRawConn(fd)
 		if err != nil {
@@ -192,18 +200,25 @@ func (fd *netFD) listenStream(laddr sockaddr, backlog int, ctrlFn func(string, s
 			return err
 		}
 	}
-	// 完成绑定操作
+	// 完成绑定操作，为 socket 绑定地址
 	if err = syscall.Bind(fd.pfd.Sysfd, lsa); err != nil {
 		return os.NewSyscallError("bind", err)
 	}
+
 	// 完成监听操作
+	// 使用系统调用 SYS_LISTEN，第二个参数表示监听队列大小，来自 "/proc/sys/net/core/somaxconn" 或 syscall.SOMAXCONN (参见 src/net/sock_linux.go)
+	// 该函数等同于系统调用：
 	if err = listenFunc(fd.pfd.Sysfd, backlog); err != nil {
 		return os.NewSyscallError("listen", err)
 	}
+
 	// 调用 init，内部会调用 poll.FD.Init，最后调用 pollDesc.init
+	// fd.init 中会初始化 epoll，并注册文件描述符。用于在 accept 时有连接建立时上报连接事件通知。用法参见 epoll + socket 实现 socket 并发 linux 服务器
 	if err = fd.init(); err != nil {
 		return err
 	}
+
+	// 获取 socket 信息，此处会使用系统调用 getsockname 来获得配置的 socket 信息，并设置到 fd.laddr 中。监听 socket 的 fd.raddr 为 nil
 	lsa, _ = syscall.Getsockname(fd.pfd.Sysfd)
 	fd.setAddr(fd.addrFunc()(lsa), nil)
 	return nil

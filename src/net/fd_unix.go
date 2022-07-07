@@ -39,6 +39,7 @@ func newFD(sysfd, family, sotype int, net string) (*netFD, error) {
 
 // net.netFD.init 会调用 internal/poll.pollDesc.init
 func (fd *netFD) init() error {
+	// 当文件描述符为网络时，需要将第二个参数置为 true，表示使用 poll 机制
 	return fd.pfd.Init(fd.net, true)
 }
 

@@ -58,10 +58,16 @@ func (fd *FD) Init(net string, pollable bool) error {
 	if net == "file" {
 		fd.isFile = true
 	}
+
+	// 如果不使用 poll 机制，则 fd 置为 blocking mode 并返回。当 net=="file" 时不会使用 poll
 	if !pollable {
 		fd.isBlocking = 1
 		return nil
 	}
+
+	// 初始化 pollDesc。
+	// 入参校验后执行 poll 相关的操作,实际执行如下两步系统调用，
+	// 即创建一个 epoll 句柄，并注册 fd 到 epoll 句柄 epfd 中
 	err := fd.pd.init(fd)
 	if err != nil {
 		// If we could not initialize the runtime poller,
@@ -76,6 +82,7 @@ func (fd *FD) Init(net string, pollable bool) error {
 func (fd *FD) destroy() error {
 	// Poller may want to unregister fd in readiness notification mechanism,
 	// so this must be executed before CloseFunc.
+	// 从全局的 epfd 中删除待监听的文件描述符
 	fd.pd.close()
 
 	// We don't use ignoringEINTR here because POSIX does not define
@@ -83,9 +90,12 @@ func (fd *FD) destroy() error {
 	// If the descriptor is indeed closed, using a loop would race
 	// with some other goroutine opening a new descriptor.
 	// (The Linux kernel guarantees that it is closed on an EINTR error.)
+	// 关闭系统底层 socket
 	err := CloseFunc(fd.Sysfd)
 
 	fd.Sysfd = -1
+	// runtime_Semacquire 和 runtime_Semrelease 对应 P/V 操作，。可以参见 golang 中的锁源码实现：Mutex
+	// 此处表示该文件锁的引用计数为 0 且已经关闭，释放文件锁，退出 Close 函数 (其他地方可以进行如 readUnlock/writeUnlock 操作)
 	runtime_Semrelease(&fd.csema)
 	return err
 }
@@ -93,6 +103,8 @@ func (fd *FD) destroy() error {
 // Close closes the FD. The underlying file descriptor is closed by the
 // destroy method when there are no remaining references.
 func (fd *FD) Close() error {
+	// 将锁状态设置为 mutexClosed，即 mu.state 的第一个 bit 位，后续将不能使用该锁进行 lock 操作，仅能 unlock 减少锁的引用计数。
+	// 读写对应底层全双工链路，读写操作不互斥。
 	if !fd.fdmu.increfAndClose() {
 		return errClosing(fd.isFile)
 	}
@@ -102,10 +114,13 @@ func (fd *FD) Close() error {
 	// the final decref will close fd.sysfd. This should happen
 	// fairly quickly, since all the I/O is non-blocking, and any
 	// attempts to block in the pollDesc will return errClosing(fd.isFile).
+	// 调用 runtime_pollUnblock 函数 unblock pd 中的读写 goroutine。
+	// 这里会调用 goready
 	fd.pd.evict()
 
 	// The call to decref will call destroy if there are no other
 	// references.
+	// 当文件锁的引用计数为 0 时才能做 fd.destroy 清理动作
 	err := fd.decref()
 
 	// Wait until the descriptor is closed. If this was the only
@@ -114,6 +129,7 @@ func (fd *FD) Close() error {
 	// may be blocking, and that would block the Close.
 	// No need for an atomic read of isBlocking, increfAndClose means
 	// we have exclusive access to fd.
+	// 此处用于在 epoll 场景下，阻塞等待释放文件锁，最终退出 Close 函数。destroy 函数会释放锁。注意此处的锁和 fd.fdum 不是一个锁
 	if fd.isBlocking == 0 {
 		runtime_Semacquire(&fd.csema)
 	}

@@ -48,14 +48,20 @@ const (
 // pollDesc contains 2 binary semaphores, rg and wg, to park reader and writer
 // goroutines respectively. The semaphore can be in the following states:
 // pdReady - io readiness notification is pending;
-//           a goroutine consumes the notification by changing the state to nil.
+//
+//	a goroutine consumes the notification by changing the state to nil.
+//
 // pdWait - a goroutine prepares to park on the semaphore, but not yet parked;
-//          the goroutine commits to park by changing the state to G pointer,
-//          or, alternatively, concurrent io notification changes the state to pdReady,
-//          or, alternatively, concurrent timeout/close changes the state to nil.
+//
+//	the goroutine commits to park by changing the state to G pointer,
+//	or, alternatively, concurrent io notification changes the state to pdReady,
+//	or, alternatively, concurrent timeout/close changes the state to nil.
+//
 // G pointer - the goroutine is blocked on the semaphore;
-//             io notification or timeout/close changes the state to pdReady or nil respectively
-//             and unparks the goroutine.
+//
+//	io notification or timeout/close changes the state to pdReady or nil respectively
+//	and unparks the goroutine.
+//
 // nil - none of the above.
 const (
 	pdReady uintptr = 1
@@ -74,6 +80,7 @@ const pollBlockSize = 4 * 1024
 // rg 和 wg      — 表示二进制的信号量，可能为 pdReady、pdWait、等待文件描述符可读或者可写的 Goroutine 以及 nil；
 // rd 和 wd      — 等待文件描述符可读或者可写的截止日期；
 // rt 和 wt      — 用于等待文件描述符的计时器；
+//
 //go:notinheap
 type pollDesc struct {
 	link *pollDesc // in pollcache, protected by pollcache.lock
@@ -131,6 +138,7 @@ func netpollGenericInit() {
 		lock(&netpollInitLock)
 		if netpollInited == 0 {
 			netpollinit()
+			// 调用 atomic.Store 将 netpollInited 设置为1，表示已经初始化 epoll 文件句柄。
 			atomic.Store(&netpollInited, 1)
 		}
 		unlock(&netpollInitLock)
@@ -194,6 +202,7 @@ func poll_runtime_pollClose(pd *pollDesc) {
 	if rg != 0 && rg != pdReady {
 		throw("runtime: blocked read on closing polldesc")
 	}
+	// 从全局的 epfd 中删除待监听的文件描述符
 	netpollclose(pd.fd)
 	pollcache.free(pd)
 }
@@ -208,6 +217,7 @@ func (c *pollCache) free(pd *pollDesc) {
 // poll_runtime_pollReset, which is internal/poll.runtime_pollReset,
 // prepares a descriptor for polling in mode, which is 'r' or 'w'.
 // This returns an error code; the codes are defined above.
+//
 //go:linkname poll_runtime_pollReset internal/poll.runtime_pollReset
 func poll_runtime_pollReset(pd *pollDesc, mode int) int {
 	errcode := netpollcheckerr(pd, int32(mode))
@@ -226,6 +236,7 @@ func poll_runtime_pollReset(pd *pollDesc, mode int) int {
 // waits for a descriptor to be ready for reading or writing,
 // according to mode, which is 'r' or 'w'.
 // This returns an error code; the codes are defined above.
+//
 //go:linkname poll_runtime_pollWait internal/poll.runtime_pollWait
 func poll_runtime_pollWait(pd *pollDesc, mode int) int {
 	errcode := netpollcheckerr(pd, int32(mode))
@@ -430,6 +441,7 @@ func netpollblockcommit(gp *g, gpp unsafe.Pointer) bool {
 
 func netpollgoready(gp *g, traceskip int) {
 	atomic.Xadd(&netpollWaiters, -1)
+	// 这里调用了 goready
 	goready(gp, traceskip+1)
 }
 

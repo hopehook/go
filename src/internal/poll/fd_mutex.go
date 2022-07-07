@@ -209,7 +209,9 @@ func (fd *FD) incref() error {
 // It also closes fd when the state of fd is set to closed and there
 // is no remaining reference.
 func (fd *FD) decref() error {
+	// 此处减小文件锁的引用计数并判断引用计数是否为 0, 只有引用计数为 0 且文件锁关闭时才能进行 destory 工作
 	if fd.fdmu.decref() {
+		// 除 poll.decref 外，在 poll.readUnlock 和 poll.writeUnlock 也会调用 poll.desory() 函数，主要用于退出读或写操作时。
 		return fd.destroy()
 	}
 	return nil
