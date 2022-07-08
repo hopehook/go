@@ -81,6 +81,11 @@ const pollBlockSize = 4 * 1024
 // rd 和 wd      — 等待文件描述符可读或者可写的截止日期；
 // rt 和 wt      — 用于等待文件描述符的计时器；
 //
+// pollDesc 结构体中的 rg 和 wg 比较难理解，它们与 netpoll 相关，将底层缓存区的读写情况反映为当前读写对应的 goroutine 的状态。
+// 当读缓存区没有数据时，会导致 rg 阻塞(非 pdReady)，此时调用 netpollunblock 返回的为读操作所在的 goroutine；
+// 而当执行 write 操作时，如果缓存区没有空间，此时会导致 wg 阻塞，此时调用 netpollunblock 返回的为写操作所在的 goroutine。
+// 在非阻塞时，rg/wg 表示当前读/写 goroutine 状态，pdReady 表示可以进行读/写操作，pdWait 表示当前 goroutine 将会被 park(调用 gopark)住。
+// *注意：用户读写操作可以使用同一个 goroutine。
 //go:notinheap
 type pollDesc struct {
 	link *pollDesc // in pollcache, protected by pollcache.lock
@@ -159,8 +164,11 @@ func poll_runtime_isPollServerDescriptor(fd uintptr) bool {
 
 //go:linkname poll_runtime_pollOpen internal/poll.runtime_pollOpen
 func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
+	// 获取一个 pollDesc。pollcache 为全局 pd 链表，可以为 listen 和 accept 过程提供 pd。
 	pd := pollcache.alloc()
 	lock(&pd.lock)
+
+	// pd 全局链表中的节点都应该是可用或初始状态，0 为初始化状态
 	wg := atomic.Loaduintptr(&pd.wg)
 	if wg != 0 && wg != pdReady {
 		throw("runtime: blocked write on free polldesc")
@@ -169,7 +177,10 @@ func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
 	if rg != 0 && rg != pdReady {
 		throw("runtime: blocked read on free polldesc")
 	}
+
+	// pollDesc 中保存了文件描述符
 	pd.fd = fd
+	// 此处将pd的状态初始化为 false，表示该pd可用
 	pd.closing = false
 	pd.everr = false
 	pd.rseq++
@@ -181,6 +192,7 @@ func poll_runtime_pollOpen(fd uintptr) (*pollDesc, int) {
 	pd.self = pd
 	unlock(&pd.lock)
 
+	// 注册文件描述符到 epoll 句柄中
 	errno := netpollopen(fd, pd)
 	if errno != 0 {
 		pollcache.free(pd)
@@ -194,7 +206,9 @@ func poll_runtime_pollClose(pd *pollDesc) {
 	if !pd.closing {
 		throw("runtime: close polldesc w/o unblock")
 	}
+
 	wg := atomic.Loaduintptr(&pd.wg)
+	// 执行本函数前需要调用 netpollunblock 将 goroutine 变为非阻塞状态,以便回收 pd 节点
 	if wg != 0 && wg != pdReady {
 		throw("runtime: blocked write on closing polldesc")
 	}
@@ -202,8 +216,11 @@ func poll_runtime_pollClose(pd *pollDesc) {
 	if rg != 0 && rg != pdReady {
 		throw("runtime: blocked read on closing polldesc")
 	}
+
 	// 从全局的 epfd 中删除待监听的文件描述符
 	netpollclose(pd.fd)
+
+	// 回收 fd 节点
 	pollcache.free(pd)
 }
 
@@ -279,24 +296,36 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 	rd0, wd0 := pd.rd, pd.wd
 	combo0 := rd0 > 0 && rd0 == wd0
 	if d > 0 {
+		// 获取 deadline 时间
 		d += nanotime()
+		// 从注释看，这种情况表示 deadline 时间小于等于当前时间。将 deadline 时间设置为 64 bit 的最大值
 		if d <= 0 {
 			// If the user has a deadline in the future, but the delay calculation
 			// overflows, then set the deadline to the maximum possible value.
 			d = 1<<63 - 1
 		}
 	}
+
+	// 按照不同 mode 设置读写对应的 deadline 时间
 	if mode == 'r' || mode == 'r'+'w' {
 		pd.rd = d
 	}
 	if mode == 'w' || mode == 'r'+'w' {
 		pd.wd = d
 	}
+
+	// combo 用于表示仅设置了读 deadline 还是同时设置了读写 deadline
 	combo := pd.rd > 0 && pd.rd == pd.wd
+
+	// 读场景下 deadline 时间点执行的函数
 	rtf := netpollReadDeadline
+
+	// 读场景下 deadline 时间点执行的函数
 	if combo {
 		rtf = netpollDeadline
 	}
+
+	// 如果没有设置读 deadline 时间点运行的函数，则使用默认的函数
 	if pd.rt.f == nil {
 		if pd.rd > 0 {
 			pd.rt.f = rtf
@@ -316,6 +345,8 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 			pd.rt.f = nil
 		}
 	}
+
+	// 此处处理写 deadline 相关的情况，与读类似
 	if pd.wt.f == nil {
 		if pd.wd > 0 && !combo {
 			pd.wt.f = netpollWriteDeadline
@@ -332,8 +363,10 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 			pd.wt.f = nil
 		}
 	}
+
 	// If we set the new deadline in the past, unblock currently pending IO if any.
 	var rg, wg *g
+	// 如果 deadline 时间点早于当前时间，则 unblock pd 的所有 IO，返回 timeout IO 错误
 	if pd.rd < 0 || pd.wd < 0 {
 		atomic.StorepNoWB(noescape(unsafe.Pointer(&wg)), nil) // full memory barrier between stores to rd/wd and load of rg/wg in netpollunblock
 		if pd.rd < 0 {
@@ -352,19 +385,28 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 	}
 }
 
+// 获取 pd 读/写阻塞的 goroutine 并将其状态切换为 runnable，poll_runtime_pollUnblock 函数一般在 `关闭连接` 时使用。
 //go:linkname poll_runtime_pollUnblock internal/poll.runtime_pollUnblock
 func poll_runtime_pollUnblock(pd *pollDesc) {
 	lock(&pd.lock)
 	if pd.closing {
 		throw("runtime: unblock on closing polldesc")
 	}
+
+	// 将 pd 状态置为 closing, poll_runtime_pollClose 会停止并回收 pd
 	pd.closing = true
 	pd.rseq++
 	pd.wseq++
 	var rg, wg *g
 	atomic.StorepNoWB(noescape(unsafe.Pointer(&rg)), nil) // full memory barrier between store to closing and read of rg/wg in netpollunblock
+
+	// 获取读写对应的 goroutine。因此此处 ioready 设置为false，表示非底层 IO 的操作，底层 epoll 上报事件后，会通过 runtime.netpollready 调用
+	// netpollunblock 函数，此时 netpollunblock 的第三个参数会变为 true，用于将对应事件的 goroutine 变为非阻塞，处理 epoll 的读写事件
 	rg = netpollunblock(pd, 'r', false)
 	wg = netpollunblock(pd, 'w', false)
+
+	// pd.rt.f 和 pd.wt.f 都是定时器超时后执行的函数，如果这些函数非空，则清除定时器并置为初始值 nil(后续 pd 需要回收)。
+	// `定时器` 用于设置读写连接的 deadline 时间点
 	if pd.rt.f != nil {
 		deltimer(&pd.rt)
 		pd.rt.f = nil
@@ -374,6 +416,10 @@ func poll_runtime_pollUnblock(pd *pollDesc) {
 		pd.wt.f = nil
 	}
 	unlock(&pd.lock)
+
+	// 此处才是真正 unblock 阻塞的 goroutine，netpollgoready 会调用 goready 函数将阻塞的 goroutine 变为 runnable 状态，继续执行。
+	// 此处的 unblock 操作对应调用 netpollblock 函数 gopark 的 goroutine，如等待 Accept，等待 Read 等。当 Accept 有连接到达或 Read 有数据读取
+	// 时，这时需要 unblock 对应的 goroutine 继续处理(当然也包括处理错误场景)
 	if rg != nil {
 		netpollgoready(rg, 3)
 	}
@@ -500,6 +546,8 @@ func netpollblock(pd *pollDesc, mode int32, waitio bool) bool {
 	return old == pdReady
 }
 
+// 这个函数的名字有点奇怪，它并不能主动 unblock goroutine
+//
 // netpollunblock 会依据传入的 mode 决定从 pollDesc 的 rg 或者 wg， 取出当时 gopark 之时存入的 goroutine
 func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 	// mode == 'r' 代表当时 gopark 是为了等待读事件，而 mode == 'w' 则代表是等待写事件
@@ -508,12 +556,17 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 		gpp = &pd.wg
 	}
 
+	// 使用 for 循环用于执行原子操作。一个 pd 对于一条连接，而一条连接可能被多个 goroutine 操作。
 	for {
 		// 取出 gpp 存储的 g
 		old := atomic.Loaduintptr(gpp)
+
+		// 如果 gpp 为 pdReady，则对应的 goroutine 为 unblock 状态，返回即可
 		if old == pdReady {
 			return nil
 		}
+
+		// 此处用于初始状态时的场景，此时并没有调用 netpollblock 阻塞 goroutine，直接返回即可
 		if old == 0 && !ioready {
 			// Only set pdReady for ioready. runtime_pollWait
 			// will check for timeout/cancel before waiting.
@@ -523,13 +576,24 @@ func netpollunblock(pd *pollDesc, mode int32, ioready bool) *g {
 		if ioready {
 			new = pdReady
 		}
+
 		// 重置 pollDesc 的 rg 或者 wg
+		// atomic.Casuintptr 的实现在runtime/internal/atomic/asm_${plantform}.s中，如下处理逻辑为
+		//  if(*val == *old){
+		//      *val = new;
+		//      return 1;
+		//  } else {
+		//      return 0;
+		//  }
+		// 该函数的实现了 `自旋锁`, for 循环执行该原子操作。这里的原子循环应该是多 goroutine 操作同一个 pd 场景下等待一个相对稳定的状态，因为按照本
+		// 函数代码逻辑来看，*gpp 一定等于 *old
 		if atomic.Casuintptr(gpp, old, new) {
 			// 如果该 goroutine 还是必须等待，则返回 nil
 			if old == pdWait {
 				old = 0
 			}
 			// 通过万能指针还原成 g 并返回
+			// 返回阻塞在 pd.rg/pd.wg 上的 goroutine 地址
 			return (*g)(unsafe.Pointer(old))
 		}
 	}

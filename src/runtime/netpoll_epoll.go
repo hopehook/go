@@ -42,6 +42,7 @@ func netpollinit() {
 			println("runtime: epollcreate failed with", -epfd)
 			throw("runtime: netpollinit failed")
 		}
+		// 调用 fcntl 给 epfd 设置 FD_CLOEXEC，用于防止文件描述符泄露。参见使用 FD_CLOEXEC 实现 close-on-exec，关闭子进程无用文件描述符
 		closeonexec(epfd)
 	}
 	// 通过 runtime.nonblockingPipe 创建一个用于通信的管道；
@@ -77,8 +78,17 @@ func netpollIsPollDescriptor(fd uintptr) bool {
 // 注意这里使用的是 epoll 的 ET 模式，同时会利用万能指针把 pollDesc 保存到 epollevent 的一个 8 位的字节数组 data 里
 func netpollopen(fd uintptr, pd *pollDesc) int32 {
 	var ev epollevent
+	// 设置触发事件 对应描述符上有 `可读` 数据|对应描述符上有 `可写` 数据|描述符被挂起|设置为 `边缘触发` 模式(仅在状态变更时上报一次事件)
 	ev.events = _EPOLLIN | _EPOLLOUT | _EPOLLRDHUP | _EPOLLET
+
+	// 构造 epoll 的用户数据
 	*(**pollDesc)(unsafe.Pointer(&ev.data)) = pd
+
+	// 传给 epollctl 的最后一个参数 ev 有2个数据，events 和 data，对应系统调用函数 epoll_ctl 的最后一个入参
+	//  struct epoll_event {
+	//      __uint32_t events; /* Epoll events */
+	//      epoll_data_t data; /* User data variable */
+	//  }；
 	return -epollctl(epfd, _EPOLL_CTL_ADD, int32(fd), &ev)
 }
 
@@ -161,6 +171,8 @@ retry:
 	}
 	// toRun 是一个 g 的链表，存储要恢复的 goroutines，最后返回给调用方
 	var toRun gList
+
+	// epoll 可能一次性上报多个事件
 	for i := int32(0); i < n; i++ {
 		ev := &events[i]
 		if ev.events == 0 {
@@ -189,9 +201,13 @@ retry:
 		// 判断发生的事件类型，读类型或者写类型等，然后给 mode 复制相应的值，
 		// mode 用来决定从 pollDesc 里的 rg 还是 wg 里取出 goroutine
 		var mode int32
+
+		// 底层可读事件，其他事件(如_EPOLLHUP)同时涉及到读写，因此读写的 goroutine 都需要通知
 		if ev.events&(_EPOLLIN|_EPOLLRDHUP|_EPOLLHUP|_EPOLLERR) != 0 {
 			mode += 'r'
 		}
+
+		// 底层可读事件
 		if ev.events&(_EPOLLOUT|_EPOLLHUP|_EPOLLERR) != 0 {
 			mode += 'w'
 		}
@@ -204,6 +220,11 @@ retry:
 			}
 			// 调用 netpollready，传入就绪 fd 的 pollDesc，
 			// 把 fd 对应的 goroutine 添加到链表 toRun 中
+            //
+			// 这里才是底层通知读写事件来 unblock(Accept/Read等)协程的地方。
+			// netpollready 会返回 pd 对应的读写 goroutine 链表(runtime.gList),
+			// 最终在函数退出后返回给 runtime.findrunnable 函数调度。
+			// 此处 golang runtime 会将 podllDesc.rg/wg 设置为 pdReady
 			netpollready(&toRun, pd, mode)
 		}
 	}

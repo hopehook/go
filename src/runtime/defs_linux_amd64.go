@@ -171,8 +171,8 @@ type sigevent struct {
 }
 
 type epollevent struct {
-	events uint32
-	data   [8]byte // unaligned uintptr
+	events uint32  // Epoll events
+	data   [8]byte // unaligned uintptr  用户数据
 }
 
 // created by cgo -cdefs and then converted to Go

@@ -168,8 +168,10 @@ func (fd *FD) SetWriteDeadline(t time.Time) error {
 
 func setDeadlineImpl(fd *FD, t time.Time, mode int) error {
 	var d int64
+	// 如果设置了连接 deadline 时间，计算到 deadline 的时间差值。此处主要做一个预处理
 	if !t.IsZero() {
 		d = int64(time.Until(t))
+		// 这里表示 deadline 时间点为当前时间，则设置为 -1
 		if d == 0 {
 			d = -1 // don't confuse deadline right now with no deadline
 		}
@@ -181,6 +183,7 @@ func setDeadlineImpl(fd *FD, t time.Time, mode int) error {
 	if fd.pd.runtimeCtx == 0 {
 		return ErrNoDeadline
 	}
+	// 此处调用函数对定时器进行处理
 	runtime_pollSetDeadline(fd.pd.runtimeCtx, d, mode)
 	return nil
 }
