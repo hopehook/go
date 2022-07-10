@@ -396,6 +396,7 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
     //
     // 由于当前的 select 结构找到了一个 case 执行，那么剩下 case 中没有被用到的 sudog 就会被忽略并且释放掉。
     // 为了不影响 Channel 的正常使用，我们还是需要将这些废弃的 sudog 从 Channel 中出队。
+    // 注意：这里只会有 1 个 goroutine 被唤醒，因为 CAS 操作 goroutine.selectDone 的存在
 	casi = -1
 	cas = nil
 	caseSuccess = false
