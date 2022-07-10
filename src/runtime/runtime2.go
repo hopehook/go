@@ -532,6 +532,8 @@ type g struct {
 
 	// time.Sleep 缓存的定时器
 	timer          *timer         // cached timer for time.Sleep
+
+	// 避免 select watch 的多个 channel 同时就绪，导致竞争。
 	selectDone     uint32         // are we participating in a select and did someone win the race?
 
 	// Per-G GC state
