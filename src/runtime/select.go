@@ -281,7 +281,7 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	// pass 1 - look for something already waiting
 	// 循环执行的第一个阶段，查找已经准备就绪的 Channel。
 	// 第一阶段的主要职责是查找所有 case 中是否有可以立刻被处理的 Channel。
-	// 无论是在等待的 Goroutine 上还是缓冲区中，只要存在数据满足条件就会立刻处理，
+	// 无论是在等待的 Goroutine 上，还是缓冲区中，只要存在数据满足条件就会立刻处理，
 	// 如果不能立刻找到活跃的 Channel 就会进入循环的下一阶段，
 	// 按照需要将当前 Goroutine 加入到 Channel 的 sendq 或者 recvq 队列中
 	//
@@ -372,11 +372,14 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 
 	// wait for someone to wake us up
 	gp.param = nil
+
 	// Signal to anyone trying to shrink our stack that we're about
 	// to park on a channel. The window between when this G's status
 	// changes and when we set gp.activeStackChans is not safe for
 	// stack shrinking.
 	atomic.Store8(&gp.parkingOnChan, 1)
+
+	// channel send/recv dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)，因为 CAS 操作 goroutine.selectDone 的存在
 	gopark(selparkcommit, nil, waitReasonSelect, traceEvGoBlockSelect, 1)
 	gp.activeStackChans = false
 
@@ -395,8 +398,10 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	// 我们会依次对比所有 case 对应的 sudog 结构找到被唤醒的 case，获取该 case 对应的索引并返回。
     //
     // 由于当前的 select 结构找到了一个 case 执行，那么剩下 case 中没有被用到的 sudog 就会被忽略并且释放掉。
-    // 为了不影响 Channel 的正常使用，我们还是需要将这些废弃的 sudog 从 Channel 中出队。
-    // 注意：这里只会有 1 个 goroutine 被唤醒，因为 CAS 操作 goroutine.selectDone 的存在
+    // 为了不影响 Channel 的正常使用，我们还是需要将这些废弃的 sudog 从 Channel 中出队 (dequeueSudoG)。
+    // 注意：
+    //	- dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)，因为 CAS 操作 goroutine.selectDone 的存在
+    //  - dequeueSudoG: 这个函数只是释放 SudoG 的，select 特有。
 	casi = -1
 	cas = nil
 	caseSuccess = false

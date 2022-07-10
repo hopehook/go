@@ -818,6 +818,8 @@ func (q *waitq) dequeue() *sudog {
 			sgp.next = nil // mark as removed (see dequeueSudog)
 		}
 
+		// channel send/recv dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)，因为 CAS 操作 goroutine.selectDone 的存在
+		//
 		// if a goroutine was put on this queue because of a
 		// select, there is a small window between the goroutine
 		// being woken up by a different case and it grabbing the
