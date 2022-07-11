@@ -202,19 +202,42 @@ type note struct {
 	key uintptr
 }
 
+// 函数，在 GO 语言中属于头等对象，可以被当作参数传递、也可以作为函数返回值、绑定到变量。
+// Go语言称这样的参数、返回值和变量为 “Function Value”。
+//
+// Function Value 本质上是一个指针，却不直接指向函数指令入口，而是指向 runtime.funcval 结构体。
+//  （1）Go 语言里 Function Value 本质上是指向 funcval 结构体的指针；
+//  （2）Go 语言里 "闭包" 只是拥有捕获列表的 Function Value；
+//  （3）捕获变量在外层函数与闭包函数中要保持一致。
 type funcval struct {
+	// 这个地址才是函数的指令入口
 	fn uintptr
 	// variable-size, fn-specific data here
 }
 
+// 非空接口，只可以容纳实现了该接口的元素
+//
+// 接口要求实现的方法列表与动态类型的方法集都是有序的，所以经过一次循环对比就可以确定该动态类型是否实现了特定接口：
+//  （1）如果没有实现，那么 itab.fun[0] 就等于0；
+//  （2）如果实现了，就把动态类型实现的方法地址存储到 itab.fun 数组中。
+// 有了这样的 itab，再通过接口调用方法时，就可以像 C++ 的虚函数那样直接按数组下标读取地址了。
 type iface struct {
-	tab  *itab           // 表示接口的类型以及赋给这个接口的实体类型。
-	data unsafe.Pointer  // 指向接口具体的值，一般而言是一个指向 `堆内存` 的指针。
+	// 表示接口的类型，以及赋给这个接口的实体类型。
+	tab *itab
+
+	// 万能指针，一般而言是一个指向 `堆内存` 的指针。
+	data unsafe.Pointer
 }
 
+// 空接口，可以容纳任何元素
 type eface struct {
+	// 容纳的元素 类型元数据
 	_type *_type
-	data  unsafe.Pointer
+
+	// 容纳的元素
+	// 如果元素是个指针，直接存储指针即可；
+	// 如果元素是个值，需要隐士分配一个内部变量，然后将它的地址赋值给 data 字段
+	data unsafe.Pointer
 }
 
 func efaceOf(ep *any) *eface {
@@ -335,7 +358,7 @@ type gobuf struct {
 	pc   uintptr  // 存储 rip 寄存器的值
 	g    guintptr // 持有当前 gobuf 的 goroutine
 	ctxt unsafe.Pointer
-	ret  uintptr  // 保存系统调用的返回值
+	ret  uintptr // 保存系统调用的返回值
 	lr   uintptr
 	bp   uintptr // for framepointer-enabled architectures
 }
@@ -406,8 +429,8 @@ type libcall struct {
 // stack 描述了 Goroutine 的执行栈，栈的区间为 [lo, hi)，在栈两边没有任何隐式数据结构
 // 因此 Go 的执行栈由运行时管理，本质上分配在堆中，比 ulimit -s 大
 type stack struct {
-	lo uintptr  // 栈顶，低地址
-	hi uintptr  // 栈底，高地址
+	lo uintptr // 栈顶，低地址
+	hi uintptr // 栈底，高地址
 }
 
 // heldLockInfo gives info on a held lock and the rank of that lock
@@ -425,7 +448,7 @@ type g struct {
 	// It is stack.lo+StackGuard on g0 and gsignal stacks.
 	// It is ~0 on other goroutine stacks, to trigger a call to morestackc (and crash).
 	// 执行栈: stack.lo 和 stack.hi 成员描述了栈的下界和上界内存地址
-	stack       stack   // offset known to runtime/cgo
+	stack stack // offset known to runtime/cgo
 
 	// 用于栈的扩张和收缩检查，抢占标志
 	//
@@ -439,11 +462,11 @@ type g struct {
 	// 在其他栈上值为 ~0 用于触发 morestackc (并 crash) 调用
 	stackguard1 uintptr // offset known to liblink
 
-	_panic    *_panic // innermost panic - offset known to liblink
-	_defer    *_defer // innermost defer
+	_panic *_panic // innermost panic - offset known to liblink
+	_defer *_defer // innermost defer
 
 	// 当前绑定的 m
-	m         *m      // current m; offset known to arm liblink
+	m *m // current m; offset known to arm liblink
 
 	// 切换时，用于保存 g 的上下文
 	sched     gobuf   // goroutine
@@ -468,13 +491,13 @@ type g struct {
 	atomicstatus uint32
 	stackLock    uint32 // sigprof/scang lock; TODO: fold in to atomicstatus
 	// 唯一的 goroutine 的ID
-	goid         int64
+	goid int64
 	// 指向全局队列里下一个 g
-	schedlink    guintptr
+	schedlink guintptr
 	// g 被阻塞的大体时间
-	waitsince    int64      // approx time when the g become blocked
+	waitsince int64 // approx time when the g become blocked
 	// g 被阻塞的原因
-	waitreason   waitReason // if status==Gwaiting
+	waitreason waitReason // if status==Gwaiting
 
 	// 标记是否可抢占
 	// 抢占调度标志。这个为 true 时，stackguard0 等于 stackpreempt
@@ -500,41 +523,41 @@ type g struct {
 	// for stack shrinking. It's a boolean value, but is updated atomically.
 	parkingOnChan uint8
 
-	raceignore     int8     // ignore race detection events
-	sysblocktraced bool     // StartTrace has emitted EvGoInSyscall about this goroutine
-	tracking       bool     // whether we're tracking this G for sched latency statistics
-	trackingSeq    uint8    // used to decide whether to track this G
-	runnableStamp  int64    // timestamp of when the G last became runnable, only used when tracking
-	runnableTime   int64    // the amount of time spent runnable, cleared when running, only used when tracking
+	raceignore     int8  // ignore race detection events
+	sysblocktraced bool  // StartTrace has emitted EvGoInSyscall about this goroutine
+	tracking       bool  // whether we're tracking this G for sched latency statistics
+	trackingSeq    uint8 // used to decide whether to track this G
+	runnableStamp  int64 // timestamp of when the G last became runnable, only used when tracking
+	runnableTime   int64 // the amount of time spent runnable, cleared when running, only used when tracking
 	// syscall 返回之后的 cputicks，用来做 tracing
-	sysexitticks   int64    // cputicks when syscall has returned (for tracing)
-	traceseq       uint64   // trace event sequencer
-	tracelastp     puintptr // last P emitted an event for this goroutine
+	sysexitticks int64    // cputicks when syscall has returned (for tracing)
+	traceseq     uint64   // trace event sequencer
+	tracelastp   puintptr // last P emitted an event for this goroutine
 	// G 被锁定只在这个 m 上运行
 	// 如果调用了 LockOsThread，那么这个 g 会绑定到某个 m 上
-	lockedm        muintptr
-	sig            uint32
-	writebuf       []byte
-	sigcode0       uintptr
-	sigcode1       uintptr
-	sigpc          uintptr
+	lockedm  muintptr
+	sig      uint32
+	writebuf []byte
+	sigcode0 uintptr
+	sigcode1 uintptr
+	sigpc    uintptr
 	// 调用者的 PC/IP
 	// 创建该 goroutine 的语句的指令地址
-	gopc           uintptr         // pc of go statement that created this goroutine // 调用者 PC/IP
-	ancestors      *[]ancestorInfo // ancestor information goroutine(s) that created this goroutine (only used if debug.tracebackancestors)
+	gopc      uintptr         // pc of go statement that created this goroutine // 调用者 PC/IP
+	ancestors *[]ancestorInfo // ancestor information goroutine(s) that created this goroutine (only used if debug.tracebackancestors)
 	// 任务函数
 	// goroutine 函数的指令地址
-	startpc        uintptr         // pc of goroutine function // 任务函数
-	racectx        uintptr
-	waiting        *sudog         // sudog structures this g is waiting on (that have a valid elem ptr); in lock order
-	cgoCtxt        []uintptr      // cgo traceback context
-	labels         unsafe.Pointer // profiler labels
+	startpc uintptr // pc of goroutine function // 任务函数
+	racectx uintptr
+	waiting *sudog         // sudog structures this g is waiting on (that have a valid elem ptr); in lock order
+	cgoCtxt []uintptr      // cgo traceback context
+	labels  unsafe.Pointer // profiler labels
 
 	// time.Sleep 缓存的定时器
-	timer          *timer         // cached timer for time.Sleep
+	timer *timer // cached timer for time.Sleep
 
 	// 避免 select watch 的多个 channel 同时就绪，导致竞争。
-	selectDone     uint32         // are we participating in a select and did someone win the race?
+	selectDone uint32 // are we participating in a select and did someone win the race?
 
 	// Per-G GC state
 
@@ -571,51 +594,51 @@ type m struct {
 	divmod  uint32 // div/mod denominator for arm - known to liblink
 
 	// Fields not known to debuggers.
-	procid        uint64            // for debuggers, but offset not hard-coded
+	procid uint64 // for debuggers, but offset not hard-coded
 	// 处理信号的 goroutine
-	gsignal       *g                // signal-handling g
-	goSigStack    gsignalStack      // Go-allocated signal handling stack
-	sigmask       sigset            // storage for saved signal mask
+	gsignal    *g           // signal-handling g
+	goSigStack gsignalStack // Go-allocated signal handling stack
+	sigmask    sigset       // storage for saved signal mask
 
 	// 通过 tls 结构体实现 m 与工作线程的绑定
 	// 这里是线程本地存储
-	tls           [tlsSlots]uintptr // thread-local storage (for x86 extern register)
-	mstartfn      func()            // 启动函数
+	tls      [tlsSlots]uintptr // thread-local storage (for x86 extern register)
+	mstartfn func()            // 启动函数
 
 	// 当前运行的 goroutine
-	curg          *g       // current running goroutine // 当前运行的 G
+	curg *g // current running goroutine // 当前运行的 G
 
-	caughtsig     guintptr // goroutine running during fatal signal
+	caughtsig guintptr // goroutine running during fatal signal
 
 	// 绑定的 P
-	p             puintptr // attached p for executing go code (nil if not executing go code)
+	p puintptr // attached p for executing go code (nil if not executing go code)
 	// 临时存放 P
-	nextp         puintptr
-	oldp          puintptr // the p that was attached before executing a syscall
+	nextp puintptr
+	oldp  puintptr // the p that was attached before executing a syscall
 
-	id            int64
+	id int64
 
-	mallocing     int32
-	throwing      int32
+	mallocing int32
+	throwing  int32
 	// 该字段不等于空字符串的话，要保持 curg 始终在这个 m 上运行
-	preemptoff    string // if != "", keep curg running on this m
+	preemptoff string // if != "", keep curg running on this m
 	// locks 表示该 M 是否被锁的状态，M 被锁的状态下该 M 无法执行 GC
-	locks         int32
-	dying         int32
-	profilehz     int32
+	locks     int32
+	dying     int32
+	profilehz int32
 	// 是否自旋，自旋就表示 M 正在找 G 来运行
-	spinning      bool // m is out of work and is actively looking for work
+	spinning bool // m is out of work and is actively looking for work
 	// m 是否被阻塞
-	blocked       bool // m is blocked on a note
-	newSigstack   bool // minit on C thread called sigaltstack
-	printlock     int8
+	blocked     bool // m is blocked on a note
+	newSigstack bool // minit on C thread called sigaltstack
+	printlock   int8
 
 	// 正在执行 cgo 调用
-	incgo         bool   // m is executing a cgo call
-	freeWait      uint32 // if == 0, safe to free g0 and delete m (atomic)
-	fastrand      uint64
-	needextram    bool
-	traceback     uint8
+	incgo      bool   // m is executing a cgo call
+	freeWait   uint32 // if == 0, safe to free g0 and delete m (atomic)
+	fastrand   uint64
+	needextram bool
+	traceback  uint8
 
 	// cgo 调用总计数
 	ncgocall      uint64      // number of cgo calls in total
@@ -626,21 +649,21 @@ type m struct {
 
 	// 没有 goroutine 需要运行时，工作线程睡眠在这个 park 成员上，
 	// 其它线程通过这个 park 唤醒该工作线程
-	park          note        // 休眠锁
+	park note // 休眠锁
 
 	// 用于链接 allm，记录所有工作线程的链表
-	alllink       *m // on allm
-	schedlink     muintptr
+	alllink   *m // on allm
+	schedlink muintptr
 	// 锁定 g 在当前 m 上执行，而不会切换到其他 m，一般 cgo 调用或者手动调用 LockOSThread() 才会有值
-	lockedg       guintptr
+	lockedg guintptr
 	// thread 创建的栈
-	createstack   [32]uintptr // stack that created this thread.
+	createstack [32]uintptr // stack that created this thread.
 	// 用户锁定 M 的标记
-	lockedExt     uint32      // tracking for external LockOSThread
+	lockedExt uint32 // tracking for external LockOSThread
 	// runtime 内部锁定 M 的标记
-	lockedInt     uint32      // tracking for internal lockOSThread
+	lockedInt uint32 // tracking for internal lockOSThread
 	// 正在等待锁的下一个 m
-	nextwaitm     muintptr    // next m waiting for lock
+	nextwaitm     muintptr // next m waiting for lock
 	waitunlockf   func(*g, unsafe.Pointer) bool
 	waitlock      unsafe.Pointer
 	waittraceev   byte
@@ -691,18 +714,18 @@ type m struct {
 // p 保存 go 运行时所必须的资源
 type p struct {
 	// id 也是 allp 的数组下标
-	id          int32
-	status      uint32 // one of pidle/prunning/...
+	id     int32
+	status uint32 // one of pidle/prunning/...
 	// 单向链表，指向下一个 P 的地址
-	link        puintptr
+	link puintptr
 	// 每次调用 schedule 时会加一
-	schedtick   uint32     // incremented on every scheduler call
+	schedtick uint32 // incremented on every scheduler call
 	// 每一次系统调用加 1
-	syscalltick uint32     // incremented on every system call
+	syscalltick uint32 // incremented on every system call
 	// 用于 sysmon 线程记录被监控 p 的系统调用时间和运行时间
-	sysmontick  sysmontick // last tick observed by sysmon
+	sysmontick sysmontick // last tick observed by sysmon
 	// 指向绑定的 m，如果 p 是 idle 的话，那这个指针是 nil
-	m           muintptr   // back-link to associated m (nil if idle)
+	m           muintptr // back-link to associated m (nil if idle)
 	mcache      *mcache
 	pcache      pageCache
 	raceprocctx uintptr
@@ -720,7 +743,7 @@ type p struct {
 	runqhead uint32
 	runqtail uint32
 	// 使用数组实现的循环队列，最多 256 个 goroutine
-	runq     [256]guintptr
+	runq [256]guintptr
 
 	// runnext, if non-nil, is a runnable G that was ready'd by
 	// the current G and should be run next instead of what's in
@@ -863,29 +886,29 @@ type schedt struct {
 	// sure to call checkdead().
 
 	// 由空闲的工作线程 M 组成的链表，这些 M 没有 G 可以执行，等待唤醒
-	midle        muintptr // idle m's waiting for work // 闲置的 M 链表
+	midle muintptr // idle m's waiting for work // 闲置的 M 链表
 	// 空闲的工作线程数量
-	nmidle       int32    // number of idle m's waiting for work
+	nmidle int32 // number of idle m's waiting for work
 	// 空闲的且被 lock 的 m 计数
-	nmidlelocked int32    // number of locked m's waiting for work
-	mnext        int64    // number of m's that have been created and next M ID
+	nmidlelocked int32 // number of locked m's waiting for work
+	mnext        int64 // number of m's that have been created and next M ID
 	// 表示最多所能创建的工作线程数量
-	maxmcount    int32    // maximum number of m's allowed (or die)
-	nmsys        int32    // number of system m's not counted for deadlock
-	nmfreed      int64    // cumulative number of freed m's
+	maxmcount int32 // maximum number of m's allowed (or die)
+	nmsys     int32 // number of system m's not counted for deadlock
+	nmfreed   int64 // cumulative number of freed m's
 
 	// goroutine 的数量，自动更新
 	ngsys uint32 // number of system goroutines; updated atomically
 
 	// 由空闲的 p 结构体对象组成的链表
-	pidle      puintptr // idle p's
+	pidle puintptr // idle p's
 	// 空闲的 p 结构体对象的数量
 	npidle     uint32
 	nmspinning uint32 // See "Worker thread parking/unparking" comment in proc.go.
 
 	// Global runnable queue.
 	// 全局可运行的 G队列
-	runq     gQueue
+	runq gQueue
 	// 元素数量
 	runqsize int32
 
@@ -1012,17 +1035,25 @@ type funcinl struct {
 // Needs to be in sync with
 // ../cmd/compile/internal/reflectdata/reflect.go:/^func.WriteTabs.
 type itab struct {
-	inter *interfacetype  // 接口的类型
-	_type *_type          // 实体的类型
-	hash  uint32 // copy of _type.hash. Used for type switches.
-	_     [4]byte
-	// fun 字段放置和接口方法对应的具体数据类型的方法地址，实现接口调用方法的动态分派，一般在每次给接口赋值发生转换时会更新此表，或者直接拿缓存的 itab。
+
+	// 接口的类型元数据
+	// 记录着 「该接口要求实现的方法列表」
+	inter *interfacetype
+
+	// 实体的类型元数据，从 _type 到 uncommontype，再到 [mcount]method，可以找到 「该动态类型的方法集」。
+	_type *_type
+
+	hash uint32 // copy of _type.hash. Used for type switches.
+	_    [4]byte
+
+	// fun 字段放置和接口方法对应的具体数据类型的方法地址，实现接口调用方法的动态分派，
+	// 一般在每次给接口赋值发生转换时会更新此表，或者直接拿缓存的 itab。
 	//
 	// 为什么 fun 数组的大小为 1，要是接口定义了多个方法可怎么办？
 	// 实际上，这里存储的是第一个方法的函数指针，如果有更多的方法，在它之后的内存空间里继续存储。
 	// 从汇编角度来看，通过增加地址就能获取到这些函数指针，没什么影响。
 	// 顺便提一句，这些方法是按照函数名称的字典序进行排列的。
-	fun   [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.
+	fun [1]uintptr // variable sized. fun[0]==0 means _type does not implement inter.
 }
 
 // Lock-free stack node.
@@ -1079,9 +1110,9 @@ type _defer struct {
 	sp        uintptr // sp at time of defer
 	pc        uintptr // pc at time of defer
 	// fn 是 defer 关键字中传入的函数
-	fn        func()  // can be nil for open-coded defers
-	_panic    *_panic // panic that is running defer
-	link      *_defer // next defer on G; can point to either heap or stack!
+	fn     func()  // can be nil for open-coded defers
+	_panic *_panic // panic that is running defer
+	link   *_defer // next defer on G; can point to either heap or stack!
 
 	// If openDefer is true, the fields below record values about the stack
 	// frame and associated function that has the open-coded defer(s). sp
@@ -1218,15 +1249,15 @@ func (w waitReason) String() string {
 
 var (
 	// 保存所有的 m
-	allm       *m
+	allm *m
 
 	// p 的最大值，默认等于 ncpu
 	gomaxprocs int32
 	// 程序启动时，会调用 osinit 函数获得此值
-	ncpu       int32
-	forcegc    forcegcstate
-	sched      schedt
-	newprocs   int32
+	ncpu     int32
+	forcegc  forcegcstate
+	sched    schedt
+	newprocs int32
 
 	// allpLock protects P-less reads and size changes of allp, idlepMask,
 	// and timerpMask, and all writes to allp.

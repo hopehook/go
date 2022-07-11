@@ -43,6 +43,9 @@ type mcache struct {
 
 	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
 
+	// 同堆内存分配一样，每个 P 也有用于栈分配的本地缓存(mcache.stackcache)。
+	//
+	// 在 Linux 环境下，有四种规格的空闲内存块链表（2KB，4KB，8KB，16KB）。
 	stackcache [_NumStackOrders]stackfreelist
 
 	// flushGen indicates the sweepgen during which this mcache

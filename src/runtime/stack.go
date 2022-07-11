@@ -164,20 +164,33 @@ const (
 // 具有可用栈的 span 的全局池
 // 每个栈均根据其大小会被分配一个 order = log_2(size/FixedStack)
 // 每个 order 都包含一个可用 mspan 链表
+//
+// span 除了用作堆内存分配外，也用于栈内存分配，只是用途不同的 span 对应的 mspan 状态不同。
+// 用做堆内存的 mspan 状态为 mSpanInUse，而用做栈内存的状态为 mSpanManual。
+//
+// stackpool 面向 32KB 以下的栈分配，栈大小必须是 2 的幂，最小 2KB，
+// 在 Linux 环境下，stackpool 提供了 2kB、4KB、8KB、16KB 四种规格的 mspan 链表。
 var stackpool [_NumStackOrders]struct {
 	item stackpoolItem
-	_    [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
+
+	// 用于内存对齐的填充空间
+	_ [cpu.CacheLinePadSize - unsafe.Sizeof(stackpoolItem{})%cpu.CacheLinePadSize]byte
 }
 
 //go:notinheap
 type stackpoolItem struct {
-	mu   mutex
+	mu mutex
 
 	// 可用 mspan 链表 (双向链表)
 	span mSpanList
 }
 
 // Global pool of large stack spans.
+//
+// stackLarge 用于大于等于 32KB 的栈分配，这也是个 mspan 链表的数组，长度为 25。
+//
+// mspan 规格从 8KB 开始，之后每个链表的 mspan 规格，都是前一个的两倍。
+// 8KB 和 16KB 这两个链表，实际上会一直是空的，留着它们是为了方便使用 mspan 包含页面数的（以2为底）对数作为数组下标。
 var stackLarge struct {
 	lock mutex
 

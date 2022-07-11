@@ -33,17 +33,17 @@ const (
 // ../internal/reflectlite/type.go:/^type.rtype.
 type _type struct {
 	// 类型大小
-	size       uintptr
-	ptrdata    uintptr // size of memory prefix holding all pointers
+	size    uintptr
+	ptrdata uintptr // size of memory prefix holding all pointers
 	// 类型的 hash 值
-	hash       uint32
+	hash uint32
 	// 类型的 flag，和反射相关
-	tflag      tflag
+	tflag tflag
 	// 内存对齐相关
 	align      uint8
 	fieldAlign uint8
 	// 类型的编号，有 bool, slice, struct 等等等等
-	kind       uint8
+	kind uint8
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
 	equal func(unsafe.Pointer, unsafe.Pointer) bool
@@ -328,7 +328,7 @@ type textOff int32
 type method struct {
 	name nameOff
 	mtyp typeOff
-	ifn  textOff
+	ifn  textOff // 通过 method.ifn 字段得到方法的地址，然后就像调用普通函数一样调用就可以了。
 	tfn  textOff
 }
 
@@ -347,8 +347,8 @@ type imethod struct {
 
 type interfacetype struct {
 	typ     _type
-	pkgpath name       // 记录定义了接口的包名
-	mhdr    []imethod  // 表示接口所定义的函数列表
+	pkgpath name      // 记录定义了接口的包名
+	mhdr    []imethod // 表示接口所定义的函数列表, 实现该接口的条件
 }
 
 type maptype struct {
