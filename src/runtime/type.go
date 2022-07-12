@@ -333,11 +333,18 @@ type method struct {
 }
 
 type uncommontype struct {
+	// 包路径
 	pkgpath nameOff
-	mcount  uint16 // number of methods
-	xcount  uint16 // number of exported methods
-	moff    uint32 // offset from this uncommontype to [mcount]method
-	_       uint32 // unused
+
+	// 方法数目
+	mcount uint16 // number of methods
+
+	// 可导出的方法数目
+	xcount uint16 // number of exported methods
+
+	// 方法所在数组的偏移
+	moff uint32 // offset from this uncommontype to [mcount]method
+	_    uint32 // unused
 }
 
 type imethod struct {
@@ -396,8 +403,8 @@ type chantype struct {
 }
 
 type slicetype struct {
-	typ  _type
-	elem *_type
+	typ  _type  // 切片本身的元类型
+	elem *_type // 切片内元素的元类型
 }
 
 type functype struct {
