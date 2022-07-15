@@ -374,7 +374,11 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	if gp.waiting != nil {
 		throw("gp.waiting != nil")
 	}
+
+	// 这些 sudog 结构体都会被串成链表附着在当前 Goroutine 上
 	nextp = &gp.waiting
+
+	// 在入队之后会调用 gopark 函数挂起当前的 Goroutine 等待调度器的唤醒。
 	for _, casei := range lockorder {
 		casi = int(casei)
 		cas = &scases[casi]
@@ -414,13 +418,19 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	// stack shrinking.
 	atomic.Store8(&gp.parkingOnChan, 1)
 
-	// channel send/recv dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)，因为 CAS 操作 goroutine.selectDone 的存在
+	// channel send/recv dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)
+	// 因为 dequeue 函数里 CAS 操作 goroutine.selectDone 的存在
 	gopark(selparkcommit, nil, waitReasonSelect, traceEvGoBlockSelect, 1)
+
+	// 这里已经被唤醒了，接下来选择合适的 case
 	gp.activeStackChans = false
 
+	// 加锁所有的 channel
 	sellock(scases, lockorder)
 
 	gp.selectDone = 0
+
+	// param 存放唤醒 goroutine 的 sudog，如果是关闭操作唤醒的，那么就为 nil
 	sg = (*sudog)(gp.param)
 	gp.param = nil
 
@@ -438,9 +448,12 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	//	- dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)，因为 CAS 操作 goroutine.selectDone 的存在
 	//  - dequeueSudoG: 这个函数只是释放 SudoG 的，select 特有。
 	casi = -1
-	cas = nil
+	cas = nil // cas 便是唤醒 goroutine 的 case
 	caseSuccess = false
+
+	// waiting 链表按照 lockorder 顺序存放着 sudog
 	sglist = gp.waiting
+
 	// Clear all elem before unlinking from gp.waiting.
 	for sg1 := gp.waiting; sg1 != nil; sg1 = sg1.waitlink {
 		sg1.isSelect = false
@@ -449,8 +462,12 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	}
 	gp.waiting = nil
 
+	// 当前 goroutine 被唤醒后，将其他 sudog 从相应的 channel 等待队列中移除
 	for _, casei := range lockorder {
 		k = &scases[casei]
+
+		// 如果相等说明，goroutine 是被当前 case 的 channel 收发操作唤醒的
+		// 如果是关闭操作，那么 sg 为 nil, 不会对 cas 赋值
 		if sg == sglist {
 			// sg has already been dequeued by the G that woke us up.
 			casi = int(casei)
@@ -460,19 +477,26 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 				caseReleaseTime = sglist.releasetime
 			}
 		} else {
+			// goroutine 已经被唤醒，将 sudog 从相应的收发队列中移除
 			c = k.c
+
+			// func (q *waitq) dequeueSudoG(sgp *sudog)
+			// dequeueSudoG 会通过 sudog.prev 和 sudog.next 将 sudog 从等待队列中移除
 			if int(casei) < nsends {
 				c.sendq.dequeueSudoG(sglist)
 			} else {
 				c.recvq.dequeueSudoG(sglist)
 			}
 		}
+
+		// 释放 sudog，然后准备处理下一个 sudog
 		sgnext = sglist.waitlink
 		sglist.waitlink = nil
 		releaseSudog(sglist)
 		sglist = sgnext
 	}
 
+	// 由关闭操作唤醒 goroutine，现在的代码应该不存在这种情况了
 	if cas == nil {
 		throw("selectgo: bad wakeup")
 	}
