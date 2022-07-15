@@ -36,12 +36,12 @@ type hchan struct {
 	buf      unsafe.Pointer // points to an array of dataqsiz elements // 缓冲槽的指针，指向底层循环数组，只有缓冲型的 channel 才有
 	elemsize uint16         // 元素大小
 	closed   uint32         // channel 是否关闭了
-	elemtype *_type // element type  // 元素类型
+	elemtype *_type         // element type  // 元素类型
 
-	sendx    uint   // send index            // 缓冲槽发送位置索引
-	recvx    uint   // receive index         // 缓冲槽接收位置索引
-	recvq    waitq  // list of recv waiters  // 等待接收队列
-	sendq    waitq  // list of send waiters  // 等待发送队列
+	sendx uint  // send index            // 缓冲槽发送位置索引
+	recvx uint  // receive index         // 缓冲槽接收位置索引
+	recvq waitq // list of recv waiters  // 等待接收队列
+	sendq waitq // list of send waiters  // 等待发送队列
 
 	// lock protects all fields in hchan, as well as several
 	// fields in sudogs blocked on this channel.
@@ -114,9 +114,9 @@ func makechan(t *chantype, size int) *hchan {
 	}
 
 	// 设置 channel 的属性
-	c.elemsize = uint16(elem.size)  // 元素大小
-	c.elemtype = elem               // 元素类型
-	c.dataqsiz = uint(size)         // 缓冲槽大小
+	c.elemsize = uint16(elem.size) // 元素大小
+	c.elemtype = elem              // 元素类型
+	c.dataqsiz = uint(size)        // 缓冲槽大小
 	lockInit(&c.lock, lockRankHchan)
 
 	if debugChan {
@@ -197,7 +197,11 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	// channel wasn't closed during the first observation. However, nothing here
 	// guarantees forward progress. We rely on the side effects of lock release in
 	// chanrecv() and closechan() to update this thread's view of c.closed and full().
+	//
+	// 快速检测，非阻塞时，有些情况不需要获取锁就可以直接返回
+	// 非阻塞，未关闭，非缓冲+没有等待接收的 goroutine 或者 缓冲+缓冲区已满
 	if !block && c.closed == 0 && full(c) {
+		// 返回 false，表示未发送成功
 		return false
 	}
 
@@ -251,8 +255,8 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 
 	// Block on the channel. Some receiver will complete our operation for us.
 	// 如果没有接收者，缓冲槽已经满了，就把 G 封装成 sudog，阻塞在 channel 上，等待接收者 G 来唤醒
-	gp := getg()              // 1. 调用 runtime.getg 获取发送数据使用的 Goroutine；
-	mysg := acquireSudog()    // 2. 执行 runtime.acquireSudog 获取 runtime.sudog 结构
+	gp := getg()           // 1. 调用 runtime.getg 获取发送数据使用的 Goroutine；
+	mysg := acquireSudog() // 2. 执行 runtime.acquireSudog 获取 runtime.sudog 结构
 	// 3. 设置这一次阻塞发送的相关信息，例如发送的 Channel、是否在 select 中和待发送数据的内存地址等；
 	mysg.releasetime = 0
 	if t0 != 0 {
@@ -708,6 +712,7 @@ func chanparkcommit(gp *g, chanLock unsafe.Pointer) bool {
 }
 
 // compiler implements
+// 非阻塞发送
 //
 //	select {
 //	case c <- v:
@@ -729,6 +734,7 @@ func selectnbsend(c *hchan, elem unsafe.Pointer) (selected bool) {
 }
 
 // compiler implements
+// 非阻塞接收
 //
 //	select {
 //	case v, ok = <-c:

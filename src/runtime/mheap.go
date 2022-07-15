@@ -438,7 +438,9 @@ type mspan struct {
 	// The sweep will free the old allocBits and set allocBits to the
 	// gcmarkBits. The gcmarkBits are replaced with a fresh zeroed
 	// out memory.
-	allocBits  *gcBits
+	// 标记内存是否分配
+	allocBits *gcBits
+	// 标记是否存活
 	gcmarkBits *gcBits
 
 	// sweep generation:
@@ -449,9 +451,11 @@ type mspan struct {
 	// if sweepgen == h->sweepgen + 3, the span was swept and then cached and is still cached
 	// h->sweepgen is incremented by 2 after every GC
 
-	sweepgen    uint32
-	divMul      uint32        // for divide by elemsize
-	allocCount  uint16        // number of allocated objects
+	sweepgen   uint32
+	divMul     uint32 // for divide by elemsize
+	allocCount uint16 // number of allocated objects
+
+	// noscan 表示没有指针，不需要 GC 扫描
 	spanclass   spanClass     // size class and noscan (uint8)
 	state       mSpanStateBox // mSpanInUse etc; accessed atomically (get/set methods)
 	needzero    uint8         // needs to be zeroed before allocation

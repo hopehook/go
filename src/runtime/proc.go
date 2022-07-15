@@ -111,7 +111,7 @@ var modinfo string
 //   workers.
 
 var (
-	m0           m  // 第 1 个启动的系统线程 m0，代表进程的主线程，启动后就和普通的 M 无异了
+	m0 m // 第 1 个启动的系统线程 m0，代表进程的主线程，启动后就和普通的 M 无异了
 	// m0 的 g0，即 m0.g0 = &g0
 	// 这个 g0 不是我们通常所说的 g0，是 m0 的 g0，程序最初启动入口 runtime·rt0_go(SB) 初始化的
 	g0           g
@@ -310,6 +310,7 @@ func init() {
 	go forcegchelper()
 }
 
+// sysmon 监控线程触发 forcegchelper 协程执行 GC 任务
 func forcegchelper() {
 	forcegc.g = getg()
 	lockInit(&forcegc.lock, lockRankForcegc)
@@ -547,7 +548,7 @@ var (
 	// variables below.
 	allglock mutex
 	// 所有的 G 都会存在这个数组里
-	allgs    []*g
+	allgs []*g
 
 	// allglen and allgptr are atomic variables that contain len(allgs) and
 	// &allgs[0] respectively. Proper ordering depends on totally-ordered
@@ -561,7 +562,7 @@ var (
 	// allgptr copies should always be stored as a concrete type or
 	// unsafe.Pointer, not uintptr, to ensure that GC can still reach it
 	// even if it points to a stale array.
-	allglen uintptr  // 所有 g 的长度
+	allglen uintptr // 所有 g 的长度
 	allgptr **g
 )
 
@@ -752,10 +753,10 @@ func schedinit() {
 		throw("sched.timeToRun not aligned to 8 bytes")
 	}
 
-	goargs()       // 获取程序执行的输入参数，会赋值到 runtime.argslice，os.Args 也依赖它获取程序的参数
-	goenvs()       // 获取程序的环境变量，会赋值到 runtime.envs，os.Environ() 也依赖它获取环境变量
-	parsedebugvars()  // 处理 GODEBUG GOTRACEBACK 调试相关的环境变量设置
-	gcinit()          // GC(垃圾回收器) 初始化
+	goargs()         // 获取程序执行的输入参数，会赋值到 runtime.argslice，os.Args 也依赖它获取程序的参数
+	goenvs()         // 获取程序的环境变量，会赋值到 runtime.envs，os.Environ() 也依赖它获取环境变量
+	parsedebugvars() // 处理 GODEBUG GOTRACEBACK 调试相关的环境变量设置
+	gcinit()         // GC(垃圾回收器) 初始化
 
 	lock(&sched.lock)
 	sched.lastpoll = uint64(nanotime())
@@ -1537,7 +1538,6 @@ func mPark() {
 		// 让 M 休眠，等待被唤醒
 		notesleep(&g.m.park)
 		// 被其他工作线程唤醒了
-
 
 		// Note, because of signal handling by this parked m,
 		// a preemptive mDoFixup() may actually occur via
@@ -2888,7 +2888,7 @@ top:
 	}
 
 	now, pollUntil, _ := checkTimers(_p_, 0)
-    // fing 使用来执行 finalizer 的 goroutine
+	// fing 使用来执行 finalizer 的 goroutine
 	if fingwait && fingwake {
 		if gp := wakefing(); gp != nil {
 			ready(gp, 0, true)
@@ -3573,7 +3573,7 @@ top:
 		// if checkTimers added a local goroutine via goready.
 	}
 	// 从其他可能的地方获取 G
-    // 1. get g from local queue
+	// 1. get g from local queue
 	// 2. get g from global queue
 	// 3. poll network
 	// 4. steal from other P's
@@ -4492,7 +4492,6 @@ func malg(stacksize int32) *g {
 		// 将 stacksize 舍入为 2 的指数，目的是为了消除 _StackSystem 对栈的影响
 		// 在 Linux/Darwin 上（ _StackSystem == 0 ）本行不改变 stacksize 的大小
 		stacksize = round2(_StackSystem + stacksize)
-
 
 		systemstack(func() {
 			// 执行栈本身是通过 stackalloc 来进行分配。

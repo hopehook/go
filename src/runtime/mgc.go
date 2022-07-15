@@ -185,6 +185,8 @@ func gcenable() {
 // Indicates to write barrier and synchronization task to perform.
 var gcphase uint32
 
+// 写屏障状态
+//
 // The compiler knows about this variable.
 // If you change it, you must change builtin/runtime.go, too.
 // If you change the first four bytes, you must also change the write
@@ -202,6 +204,7 @@ var writeBarrier struct {
 // gcphase == _GCmark.
 var gcBlackenEnabled uint32
 
+// GC 执行的阶段
 const (
 	_GCoff             = iota // GC not running; sweeping in background, write barrier disabled
 	_GCmark                   // GC marking roots and workbufs: allocate black, write barrier ENABLED
@@ -612,6 +615,10 @@ func gcStart(trigger gcTrigger) {
 	// For stats, check if this GC was forced by the user.
 	work.userForced = trigger.kind == gcTriggerCycle
 
+	// gcBackgroundMode，默认模式，标记与清扫过程都是并发执行的
+	// gcForceMode，只在清扫阶段支持并发；
+	// gcForceBlockMode，GC 全程需要 STW。
+	//
 	// In gcstoptheworld debug mode, upgrade the mode accordingly.
 	// We do this after re-checking the transition condition so
 	// that multiple goroutines that detect the heap trigger don't

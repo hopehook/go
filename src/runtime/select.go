@@ -34,7 +34,9 @@ func selectsetpc(pc *uintptr) {
 func sellock(scases []scase, lockorder []uint16) {
 	var c *hchan
 	for _, o := range lockorder {
-		c0 := scases[o].c
+		c0 := scases[o].c // 根据加锁顺序获取 case
+
+		// c 记录了上次加锁的 hchan 地址，如果和当前 *hchan 相同，那么就不会再次加锁
 		if c0 != c {
 			c = c0
 			lock(&c.lock)
@@ -151,6 +153,12 @@ func block() {
 //		...
 //		break
 //	}
+//
+//
+// selectgo 参数:
+//   cas0 指向一个类型为 [ncases]scase 的数组
+//   order0 是一个指向[2*ncases]uint16, 数组中的值都是 0
+// selectgo 会返回选中的序号，如果是个接收操作，还会返回是否接收到一个值
 func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, block bool) (int, bool) {
 	if debugSelect {
 		print("select: cas0=", cas0, "\n")
@@ -162,6 +170,8 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	order1 := (*[1 << 17]uint16)(unsafe.Pointer(order0))
 
 	ncases := nsends + nrecvs
+
+	// [:n:n] 的方式会让 slice 的 len 和 cap 相等
 	scases := cas1[:ncases:ncases]
 	pollorder := order1[:ncases:ncases]
 	lockorder := order1[ncases:][:ncases:ncases]
@@ -196,11 +206,14 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	// optimizing (and needing to test).
 
 	// generate permuted order
+	//
+	// pollorder 在开始的时候值都是 0，循环结束后值便是随机顺序的 scases 索引
 	norder := 0
 	for i := range scases {
 		cas := &scases[i]
 
 		// Omit cases without channels from the poll and lock orders.
+		// 为 nil 的 channel 直接忽略掉
 		if cas.c == nil {
 			cas.elem = nil // allow GC
 			continue
@@ -211,6 +224,7 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 		pollorder[j] = uint16(i)
 		norder++
 	}
+
 	// 轮询顺序：通过 runtime.fastrandn 函数引入随机性；
 	//  - 避免饥饿：随机的轮询顺序可以避免 Channel 的饥饿问题，保证公平性；
 	pollorder = pollorder[:norder]
@@ -265,6 +279,7 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 
 	// lock all the channels involved in the select
 	// 根据 Channel 的地址排序确定加锁顺序
+	// sellock 对地址相同的 channel 只会加锁一次
 	sellock(scases, lockorder)
 
 	var (
@@ -280,6 +295,7 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 
 	// pass 1 - look for something already waiting
 	// 循环执行的第一个阶段，查找已经准备就绪的 Channel。
+	//
 	// 第一阶段的主要职责是查找所有 case 中是否有可以立刻被处理的 Channel。
 	// 无论是在等待的 Goroutine 上，还是缓冲区中，只要存在数据满足条件就会立刻处理，
 	// 如果不能立刻找到活跃的 Channel 就会进入循环的下一阶段，
@@ -305,13 +321,18 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 		c = cas.c
 
 		if casi >= nsends {
+			// 如果 channel 中有待发送的 goroutine, 跳转到 recv，调用 recv 完成接收操作
 			sg = c.sendq.dequeue()
 			if sg != nil {
 				goto recv
 			}
+
+			// 如果 channel 中有缓冲数据，那么跳转到 bufrecv，从缓冲区中获取数据
 			if c.qcount > 0 {
 				goto bufrecv
 			}
+
+			// 如果 channel 已关闭，跳转到 rclose, 将接收值置为空值，recvOK 置为 false
 			if c.closed != 0 {
 				goto rclose
 			}
@@ -319,19 +340,27 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 			if raceenabled {
 				racereadpc(c.raceaddr(), casePC(casi), chansendpc)
 			}
+
+			// 对于发送操作会先判断 channel 是否已经关闭，跳转到 sclose，直接 panic
 			if c.closed != 0 {
 				goto sclose
 			}
+
+			// 如果 channel 未关闭，并且有待接收队列不为空
+			// 说明 channel 的缓冲区为空，跳转到 send , 调用 send 函数，直接发送数据给待接收者
 			sg = c.recvq.dequeue()
 			if sg != nil {
 				goto send
 			}
+
+			// 如果缓冲区不为空的话，跳转到 bufsend，从缓冲区获取数据
 			if c.qcount < c.dataqsiz {
 				goto bufsend
 			}
 		}
 	}
 
+	// 如果不是阻塞的 select (有 default 分支)，获取数据失败，直接结束
 	if !block {
 		selunlock(scases, lockorder)
 		casi = -1
@@ -339,6 +368,8 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	}
 
 	// pass 2 - enqueue on all chans
+	// 如果没有 channel 可以执行收发操作，并且没有 default case，
+	// 那么就将当前 goroutine 加入到 channel 相应的收发队列中，等待被其他 goroutine 唤醒
 	gp = getg()
 	if gp.waiting != nil {
 		throw("gp.waiting != nil")
@@ -348,6 +379,8 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 		casi = int(casei)
 		cas = &scases[casi]
 		c = cas.c
+
+		// 构造 sudog
 		sg := acquireSudog()
 		sg.g = gp
 		sg.isSelect = true
@@ -363,6 +396,7 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 		*nextp = sg
 		nextp = &sg.waitlink
 
+		// 加入相应等待队列
 		if casi < nsends {
 			c.sendq.enqueue(sg)
 		} else {
@@ -371,6 +405,7 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	}
 
 	// wait for someone to wake us up
+	// 被唤醒后会根据 param 来判断是否是由 close 操作唤醒的，所以先置为 nil
 	gp.param = nil
 
 	// Signal to anyone trying to shrink our stack that we're about
@@ -396,12 +431,12 @@ func selectgo(cas0 *scase, order0 *uint16, pc0 *uintptr, nsends, nrecvs int, blo
 	//
 	// 第三次遍历全部 case 时，我们会先获取当前 Goroutine 接收到的参数 sudog 结构，
 	// 我们会依次对比所有 case 对应的 sudog 结构找到被唤醒的 case，获取该 case 对应的索引并返回。
-    //
-    // 由于当前的 select 结构找到了一个 case 执行，那么剩下 case 中没有被用到的 sudog 就会被忽略并且释放掉。
-    // 为了不影响 Channel 的正常使用，我们还是需要将这些废弃的 sudog 从 Channel 中出队 (dequeueSudoG)。
-    // 注意：
-    //	- dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)，因为 CAS 操作 goroutine.selectDone 的存在
-    //  - dequeueSudoG: 这个函数只是释放 SudoG 的，select 特有。
+	//
+	// 由于当前的 select 结构找到了一个 case 执行，那么剩下 case 中没有被用到的 sudog 就会被忽略并且释放掉。
+	// 为了不影响 Channel 的正常使用，我们还是需要将这些废弃的 sudog 从 Channel 中出队 (dequeueSudoG)。
+	// 注意：
+	//	- dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)，因为 CAS 操作 goroutine.selectDone 的存在
+	//  - dequeueSudoG: 这个函数只是释放 SudoG 的，select 特有。
 	casi = -1
 	cas = nil
 	caseSuccess = false

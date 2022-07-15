@@ -30,6 +30,7 @@ func walkSelect(sel *ir.SelectStmt) {
 }
 
 func walkSelectCases(cases []*ir.CommClause) []ir.Node {
+	// 获取 case 操作的数量
 	ncas := len(cases)
 	sellineno := base.Pos
 
@@ -196,6 +197,9 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 
 	// generate sel-struct
 	base.Pos = sellineno
+
+	// selv scase 数组，scasetype() 返回的便是 scase
+	// selv 和 order 会作为 selectgo 的参数
 	selv := typecheck.Temp(types.NewArray(scasetype(), int64(ncas)))
 	init = append(init, typecheck.Stmt(ir.NewAssignStmt(base.Pos, selv, nil)))
 
@@ -211,6 +215,7 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 	}
 
 	// register cases
+	// 遍历 case 生成 scase 对象存放到 selv 中
 	for _, cas := range cases {
 		ir.SetPos(cas)
 
@@ -268,8 +273,12 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 
 	// run the select
 	base.Pos = sellineno
+
+	// selectgo 会返回的两个值，chosen 表示被选中的 case 的索引，recvOK 表示对于接收操作，是否成功接收
 	chosen := typecheck.Temp(types.Types[types.TINT])
 	recvOK := typecheck.Temp(types.Types[types.TBOOL])
+
+	// chosen, recvOK := selectgo(selv, order, n)
 	r := ir.NewAssignListStmt(base.Pos, ir.OAS2, nil, nil)
 	r.Lhs = []ir.Node{chosen, recvOK}
 	fn := typecheck.LookupRuntime("selectgo")
@@ -286,7 +295,9 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 	}
 
 	// dispatch cases
+	// 根据 selectgo 返回的 case 索引生成多个 if 语句
 	dispatch := func(cond ir.Node, cas *ir.CommClause) {
+		// 转换成 if chosen == i { // ... case body }
 		cond = typecheck.Expr(cond)
 		cond = typecheck.DefaultLit(cond, nil)
 
