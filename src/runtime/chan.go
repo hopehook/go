@@ -501,6 +501,9 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		throw("unreachable")
 	}
 
+	// 快速检测，在非阻塞模式下，和发送一样有些条件不需要加锁就可以直接判断返回
+	// 非阻塞并且未关闭，非缓冲+没有待发送者或者有缓冲+缓冲为空
+	//
 	// Fast path: check for failed non-blocking operation without acquiring the lock.
 	if !block && empty(c) {
 		// After observing that the channel is not ready for receiving, we observe whether the
@@ -824,8 +827,6 @@ func (q *waitq) dequeue() *sudog {
 			sgp.next = nil // mark as removed (see dequeueSudog)
 		}
 
-		// channel send/recv dequeue: 这里只会有 1 个 goroutine 被唤醒 (goready)，因为 CAS 操作 goroutine.selectDone 的存在
-		//
 		// if a goroutine was put on this queue because of a
 		// select, there is a small window between the goroutine
 		// being woken up by a different case and it grabbing the
@@ -834,6 +835,9 @@ func (q *waitq) dequeue() *sudog {
 		// We use a flag in the G struct to tell us when someone
 		// else has won the race to signal this goroutine but the goroutine
 		// hasn't removed itself from the queue yet.
+		//
+		// 原子操作，如果 spg.g.selectDone 不为 1，则修改为 0
+		// 为 1 说明 spg.g 已经被其他 channel 取出，直接跳过 sgp
 		if sgp.isSelect && !atomic.Cas(&sgp.g.selectDone, 0, 1) {
 			continue
 		}

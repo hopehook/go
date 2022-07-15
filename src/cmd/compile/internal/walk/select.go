@@ -200,6 +200,7 @@ func walkSelectCases(cases []*ir.CommClause) []ir.Node {
 
 	// selv scase 数组，scasetype() 返回的便是 scase
 	// selv 和 order 会作为 selectgo 的参数
+	// 在分配 selv 和 order 时，使用 Temp 方法，应该是为了保证数据会分配到栈中而不是堆中
 	selv := typecheck.Temp(types.NewArray(scasetype(), int64(ncas)))
 	init = append(init, typecheck.Stmt(ir.NewAssignStmt(base.Pos, selv, nil)))
 
