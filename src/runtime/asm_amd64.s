@@ -151,13 +151,20 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	MOVQ	SI, BX		// argv
 	SUBQ	$(5*8), SP		// 3args 2auto
 	// 调整栈顶寄存器使其按 16 字节对齐
+	//
+	// 也就是让栈顶寄存器 SP 指向的内存的地址为 16 的倍数，
+	// 之所以要按16字节对齐，是因为 CPU 有一组 SSE 指令，
+	// 这些指令中出现的内存地址必须是 16 的倍数
 	ANDQ	$~15, SP
+	// 把 argc 和 argv 搬到新的位置
 	MOVQ	AX, 24(SP)  // argc
 	MOVQ	BX, 32(SP)  // argv
 
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
 	// 《初始化 g0 栈》
+	// g0 的栈大约有 64K，地址范围为 SP - 64*1024 + 104 ～ SP
+	//
 	// 把 g0 的地址存入 DI
 	MOVQ	$runtime·g0(SB), DI
 	// BX = SP - 64*1024 + 104
@@ -249,20 +256,35 @@ needtls:
 #endif
 
     // 《主线程绑定 m0》
-    // 初始化 m 的 tls
+    // 初始化 m 的 tls (thread local storage, 线程本地存储)
+	// m0.tls[1] = 主线程 fs 段基址
+	// m0.tls[0] = &g0
+
     // DI = &m0.tls，取 m0 的 tls 成员的地址到 DI 寄存器
 	LEAQ	runtime·m0+m_tls(SB), DI
+	
 	// 调用 settls 设置线程本地存储，settls 函数的参数在 DI 寄存器中
 	// 之后，可通过 fs 段寄存器找到 m.tls
+	//
+	// 划重点：settls 函数初始化主线程的线程本地存储(TLS)，目的是把 m0 与主线程关联在一起
 	CALL	runtime·settls(SB)
 
 	// store through it, to make sure it works
+	// 验证 settls 是否可以正常工作，如果有问题则 abort 退出程序
 	// 获取 fs 段基址并放入 BX 寄存器，其实就是 m0.tls[1] 的地址，get_tls 的代码由编译器生成
 	get_tls(BX)
+
+	// 把整型常量 0x123 拷贝到 fs 段基地址偏移 -8 的内存位置，也就是 m0.tls[0] = 0x123
 	MOVQ	$0x123, g(BX)
+
+	// AX = m0.tls[0]
 	MOVQ	runtime·m0+m_tls(SB), AX
+
+	// 检查 m0.tls[0] 的值是否是通过线程本地存储存入的 0x123 来验证 tls 功能是否正常
 	CMPQ	AX, $0x123
-	JEQ 2(PC)
+	JEQ     2(PC)
+
+	// 如果线程本地存储不能正常工作，退出程序
 	CALL	runtime·abort(SB)
 ok:
 	// set the per-goroutine and per-mach "registers"
@@ -270,11 +292,12 @@ ok:
 	get_tls(BX)
 	// 将 g0 的地址存储到 CX，CX = &g0
 	LEAQ	runtime·g0(SB), CX
-	// 把 g0 的地址保存在线程本地存储里面，也就是 m0.tls[0]=&g0
+	// 把 g0 的地址保存在线程本地存储里面，也就是 m0.tls[0] = &g0
 	MOVQ	CX, g(BX)
 	// 将 m0 的地址存储到 AX，AX = &m0
 	LEAQ	runtime·m0(SB), AX
 
+	// 把 m0 和 g0 关联起来 m0->g0 = g0，g0->m = m0
 	// save m->g0 = g0
 	MOVQ	CX, m_g0(AX)
 	// save m0 to g0->m

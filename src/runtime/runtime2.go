@@ -354,13 +354,20 @@ type gobuf struct {
 	// and restores it doesn't need write barriers. It's still
 	// typed as a pointer so that any other writes from Go get
 	// write barriers.
-	sp   uintptr  // 存储 rsp 寄存器的值
-	pc   uintptr  // 存储 rip 寄存器的值
-	g    guintptr // 持有当前 gobuf 的 goroutine
+	sp   uintptr  // 存储 CPU 的 rsp 寄存器的值
+	pc   uintptr  // 存储 CPU 的 rip 寄存器的值
+	g    guintptr // 持有当前 gobuf 的 goroutine 的 “指针”
 	ctxt unsafe.Pointer
-	ret  uintptr // 保存系统调用的返回值
-	lr   uintptr
-	bp   uintptr // for framepointer-enabled architectures
+
+	// 保存系统调用的返回值，因为从系统调用返回之后如果 p 被其它工作线程抢占，
+	// 则这个 goroutine 会被放入全局运行队列被其它工作线程调度，
+	// 其它线程需要知道系统调用的返回值。
+	ret uintptr // 保存系统调用的返回值
+
+	lr uintptr
+
+	// 保存 CPU 的 rbp 寄存器的值
+	bp uintptr // for framepointer-enabled architectures
 }
 
 // sudog represents a g in a wait list, such as for sending/receiving
@@ -439,6 +446,7 @@ type heldLockInfo struct {
 	rank     lockRank
 }
 
+// 它代表了一个 goroutine
 type g struct {
 	// Stack parameters.
 	// stack describes the actual stack memory: [stack.lo, stack.hi).
@@ -492,7 +500,8 @@ type g struct {
 	stackLock    uint32 // sigprof/scang lock; TODO: fold in to atomicstatus
 	// 唯一的 goroutine 的ID
 	goid int64
-	// 指向全局队列里下一个 g
+	// schedlink 字段指向全局运行队列中的下一个g，
+	// 所有位于全局运行队列中的 g 形成一个链表
 	schedlink guintptr
 	// g 被阻塞的大体时间
 	waitsince int64 // approx time when the g become blocked
@@ -865,6 +874,7 @@ type p struct {
 
 	// preempt is set to indicate that this P should be enter the
 	// scheduler ASAP (regardless of what G is running on it).
+	// 抢占调度标志，如果需要抢占调度，设置 preempt 为true
 	preempt bool
 
 	// Padding is no longer needed. False sharing is now not a worry because p is large enough

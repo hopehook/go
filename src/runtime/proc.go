@@ -112,8 +112,9 @@ var modinfo string
 
 var (
 	m0 m // 第 1 个启动的系统线程 m0，代表进程的主线程，启动后就和普通的 M 无异了
+
 	// m0 的 g0，即 m0.g0 = &g0
-	// 这个 g0 不是我们通常所说的 g0，是 m0 的 g0，程序最初启动入口 runtime·rt0_go(SB) 初始化的
+	// 这个是 m0 的 g0，程序最初启动入口 runtime·rt0_go(SB) 初始化的
 	g0           g
 	mcache0      *mcache
 	raceprocctx0 uintptr
@@ -717,7 +718,11 @@ func schedinit() {
 
 	// raceinit must be the first call to race detector.
 	// In particular, it must be done before mallocinit below calls racemapshadow.
-	_g_ := getg()
+	//
+	// getg 函数在源代码中没有对应的定义，由编译器插入类似下面两行代码
+	//   get_tls(CX)
+	//   MOVQ g(CX), BX  // BX 寄存器里面现在放的是当前 g 结构体对象的地址
+	_g_ := getg() // _g_ = &g0
 	if raceenabled {
 		_g_.racectx, raceprocctx0 = raceinit()
 	}
@@ -739,7 +744,9 @@ func schedinit() {
 	fastrandinit() // must run before mcommoninit
 
 	// 初始化 m0
+	// 因为从前面的代码我们知道 g0->m = &m0
 	mcommoninit(_g_.m, -1)
+
 	modulesinit()   // provides activeModules
 	typelinksinit() // uses maps, activeModules
 	itabsinit()     // uses activeModules
@@ -807,6 +814,7 @@ func dumpgstatus(gp *g) {
 func checkmcount() {
 	assertLockHeld(&sched.lock)
 
+	// 检查已创建系统线程是否超过了数量限制（sched.maxmcount 默认 10000）
 	if mcount() > sched.maxmcount {
 		print("runtime: program exceeds ", sched.maxmcount, "-thread limit\n")
 		throw("thread exhaustion")
@@ -825,16 +833,19 @@ func mReserveID() int64 {
 	}
 	id := sched.mnext
 	sched.mnext++
+
+	// 检查已创建系统线程是否超过了数量限制
 	checkmcount()
 	return id
 }
 
 // Pre-allocated ID may be passed as 'id', or omitted by passing -1.
 func mcommoninit(mp *m, id int64) {
+	// 线程初始化过程中 _g_ = &g0
 	_g_ := getg()
 
 	// g0 stack won't make sense for user (and is not necessary unwindable).
-	if _g_ != _g_.m.g0 {
+	if _g_ != _g_.m.g0 { // 函数调用栈 traceback，不需要关心
 		callers(1, mp.createstack[:])
 	}
 
@@ -847,15 +858,18 @@ func mcommoninit(mp *m, id int64) {
 	}
 
 	// cputicks is not very random in startup virtual machine
+	// random 初始化
 	mp.fastrand = uint64(int64Hash(uint64(mp.id), fastrandseed^uintptr(cputicks())))
 
 	// 初始化 gsignal，用于处理 m 上的信号。
+	// 创建用于信号处理的 gsignal，只是简单的从堆上分配一个 g 结构体对象, 然后把栈设置好就返回了
 	mpreinit(mp)
 	// gsignal 的运行栈边界处理
 	if mp.gsignal != nil {
 		mp.gsignal.stackguard1 = mp.gsignal.stack.lo + _StackGuard
 	}
 
+	// 把 m 挂入全局链表 allm 之中
 	// Add to allm so garbage collector doesn't free g->m
 	// when it is just in a register or thread-local storage.
 	mp.alllink = allm
@@ -5231,12 +5245,21 @@ func (pp *p) destroy() {
 // code, so the GC must not be running if the number of Ps actually changes.
 //
 // Returns list of Ps with local work, they need to be scheduled by the caller.
+//
 // 这个函数很重要，所有的 P 都在这个函数分配，不管是最开始的初始化分配，还是后期调整
+//  1. 使用 make([]*p, nprocs) 初始化全局变量 allp，即 allp = make([]*p, nprocs)
+//  2. 循环创建并初始化 nprocs 个 p 结构体对象并依次保存在 allp 切片之中
+//  3. 把 m0 和 allp[0] 绑定在一起，即 m0.p = allp[0], allp[0].m = m0
+//  4. 把除了 allp[0] 之外的所有 p 放入到全局变量 sched 的 pidle 空闲队列之中
+//
+// 注意：
+//  m0.p = allp[0]
+//  allp[0].m = &m0
 func procresize(nprocs int32) *p {
 	assertLockHeld(&sched.lock)
 	assertWorldStopped()
 
-	old := gomaxprocs
+	old := gomaxprocs // 系统初始化时 gomaxprocs = 0
 	if old < 0 || nprocs <= 0 {
 		throw("procresize: invalid arg")
 	}
@@ -5254,13 +5277,13 @@ func procresize(nprocs int32) *p {
 	maskWords := (nprocs + 31) / 32
 
 	// Grow allp if necessary.
-	if nprocs > int32(len(allp)) {
+	if nprocs > int32(len(allp)) { // 初始化时 len(allp) == 0
 		// Synchronize with retake, which could be running
 		// concurrently since it doesn't run on a P.
 		lock(&allpLock)
 		if nprocs <= int32(cap(allp)) {
 			allp = allp[:nprocs]
-		} else {
+		} else { // 初始化时进入此分支，创建 allp 切片
 			nallp := make([]*p, nprocs)
 			// Copy everything up to allp's cap so we
 			// never lose old allocated Ps.
@@ -5285,27 +5308,29 @@ func procresize(nprocs int32) *p {
 	}
 
 	// initialize new P's
+	// 循环创建 nprocs 个 p 并完成基本初始化
 	for i := old; i < nprocs; i++ {
 		pp := allp[i]
 		if pp == nil {
-			pp = new(p)
+			pp = new(p) // 调用内存分配器从 `堆` 上分配一个 struct p
 		}
 		pp.init(i)
 		atomicstorep(unsafe.Pointer(&allp[i]), unsafe.Pointer(pp))
 	}
 
+	// _g_ = g0
 	_g_ := getg()
-	if _g_.m.p != 0 && _g_.m.p.ptr().id < nprocs {
+	if _g_.m.p != 0 && _g_.m.p.ptr().id < nprocs { // 初始化时 m0->p 还未初始化，所以不会执行这个分支
 		// continue to use the current P
 		_g_.m.p.ptr().status = _Prunning
 		_g_.m.p.ptr().mcache.prepareForSweep()
-	} else {
+	} else { // 初始化时执行这个分支
 		// release the current P and acquire allp[0].
 		//
 		// We must do this before destroying our current P
 		// because p.destroy itself has write barriers, so we
 		// need to do that from a valid P.
-		if _g_.m.p != 0 {
+		if _g_.m.p != 0 { // 初始化时这里不执行
 			if trace.enabled {
 				// Pretend that we were descheduled
 				// and then scheduled again to keep
@@ -5319,7 +5344,7 @@ func procresize(nprocs int32) *p {
 		p := allp[0]
 		p.m = 0
 		p.status = _Pidle
-		acquirep(p)
+		acquirep(p) // 把 p 和 m0 关联起来，其实是这两个 struct 的成员相互赋值
 		if trace.enabled {
 			traceGoStart()
 		}
@@ -5344,14 +5369,15 @@ func procresize(nprocs int32) *p {
 		unlock(&allpLock)
 	}
 
+	// 下面这个 for 循环把所有空闲的 p 放入空闲链表
 	var runnablePs *p
 	for i := nprocs - 1; i >= 0; i-- {
 		p := allp[i]
-		if _g_.m.p.ptr() == p {
+		if _g_.m.p.ptr() == p { // allp[0] 跟 m0 关联了，所以是不能放任
 			continue
 		}
 		p.status = _Pidle
-		if runqempty(p) {
+		if runqempty(p) { // 初始化时除了 allp[0] 其它 p 全部执行这个分支，放入空闲链表
 			pidleput(p)
 		} else {
 			p.m.set(mget())
