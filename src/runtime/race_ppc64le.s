@@ -465,7 +465,7 @@ call:
 	BL	(CTR)
 	XOR     R0, R0			// clear R0 on return from Clang
 	MOVD	R16, R1			// restore R1; R16 nonvol in Clang
-	MOVD    runtime·tls_g(SB), R10	// find correct g
+	MOVD    runtime·(SB), R10	// find correct g
 	MOVD    0(R10), g
 	MOVD	16(R1), R10		// LR was saved away, restore for return
 	MOVD	R10, LR

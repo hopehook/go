@@ -21,6 +21,12 @@ func add(p unsafe.Pointer, x uintptr) unsafe.Pointer {
 // getg returns the pointer to the current g.
 // The compiler rewrites calls to this function into instructions
 // that fetch the g directly (from TLS or from the dedicated register).
+
+// getg 返回指向当前 g 的指针。
+// 编译器将对此函数的调用重写为直接获取 g 的指令（来自TLS或来自专用寄存器）。
+// 要获取当前用户堆栈的 g，可以使用 getg().m.curg。
+// getg() 返回当前 g，但是当在系统或信号堆栈上执行时，这将分别返回当前 m 的 g0 或 gsignal 。
+// 要确定 g 是在用户堆栈还是系统堆栈上运行，可以使用 getg() == getg().m.curg，相等表示在用户态堆栈，不相等表示在系统堆栈。
 func getg() *g
 
 // mcall switches from the g to the g0 stack and invokes fn(g),
