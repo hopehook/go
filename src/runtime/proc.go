@@ -3884,7 +3884,7 @@ func goexit1() {
 	if trace.enabled {
 		traceGoEnd()
 	}
-	// 切换到 g0 执行 goexit0
+	// 切换到 g0 栈执行 goexit0
 	mcall(goexit0)
 }
 
