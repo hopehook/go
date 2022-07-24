@@ -4529,9 +4529,12 @@ func malg(stacksize int32) *g {
 // The compiler turns a go statement into a call to this.
 // 创建一个新的 goroutine
 func newproc(fn *funcval) {
+	// 获取正在运行的 g，刚启动时是 m0.g0
 	gp := getg()
+
 	// 获取调用方 PC/IP 寄存器值
 	pc := getcallerpc()
+
 	// 在 g0 的栈上创建 goroutine 对象
 	systemstack(func() {
 		newg := newproc1(fn, gp, pc)
@@ -4553,7 +4556,7 @@ func newproc(fn *funcval) {
 func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 	// 当前 goroutine 的指针
 	// 因为已经切换到 g0 栈，所以无论什么场景都是 _g_ = g0
-	// g0 是指当前工作线程的 g0
+	// g0 是指当前工作线程 M 的 g0
 	// 这里一定是 g0
 	_g_ := getg()
 
@@ -4566,6 +4569,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 
 	// 从 m 中获取 p
 	_p_ := _g_.m.p.ptr()
+
 	// 从当前 P 复用链表获取空闲 G 对象
 	newg := gfget(_p_)
 

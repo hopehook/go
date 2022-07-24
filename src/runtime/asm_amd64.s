@@ -369,11 +369,13 @@ ok:
 
 	// create a new goroutine to start program
 	// 创建 main goroutine 用于执行 runtime.main，将其放入 P 的本地队列等待调度
-	// 主要工作是运行 main goroutine，虽然在runtime·rt0_go 中指向的是$runtime·mainPC，但实质指向的是 runtime.main。
+	// 主要工作是运行 main goroutine，虽然在 runtime·rt0_go 中指向的是 $runtime·mainPC，但实质指向的是 runtime.main。
 	MOVQ	$runtime·mainPC(SB), AX		// entry
+
     // newproc 的第二个参数入栈，也就是新的 goroutine 需要执行的函数
     // AX = &funcval{runtime·main}
 	PUSHQ	AX
+
 	// 创建 main goroutine，且绑定 runtime.main 方法（也就是应用程序中的入口 main 方法）。
 	// 并将其放入 m0 绑定的 p 的本地队列中去，以便后续调度。
 	CALL	runtime·newproc(SB)
