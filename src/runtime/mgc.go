@@ -588,7 +588,8 @@ func gcStart(trigger gcTrigger) {
 	releasem(mp)
 	mp = nil
 
-	// 清理意外遗留的 span
+	// 验证垃圾收集条件的同时，该方法还会在循环中不断调用 runtime.sweepone
+	// 清理已经被标记的内存单元，完成上一个垃圾收集循环的收尾工作
 	// Pick up the remaining unswept/not being swept spans concurrently
 	//
 	// This shouldn't happen if we're being invoked in background
@@ -603,19 +604,24 @@ func gcStart(trigger gcTrigger) {
 		sweep.nbgsweep++
 	}
 
+	// 上锁，然后重新检查 gcTrigger 的条件是否成立，不成立时不触发 GC
 	// Perform GC initialization and the sweep termination
 	// transition.
 	semacquire(&work.startSema)
+
+	// 在持有锁的情况下，重新检查转换条件，若不需要触发则不触发 GC
 	// Re-check transition condition under transition lock.
 	if !trigger.test() {
 		semrelease(&work.startSema)
 		return
 	}
 
+	// 对于统计信息，请检查用户是否强制使用此 GC
+	// 记录是否强制触发，gcTriggerCycle 是 runtime.GC 用的
 	// For stats, check if this GC was forced by the user.
 	work.userForced = trigger.kind == gcTriggerCycle
 
-	// gcBackgroundMode，默认模式，标记与清扫过程都是并发执行的
+	// gcBackgroundMode，默认模式，标记与清扫过程都是 "并发执行" 的
 	// gcForceMode，只在清扫阶段支持并发；
 	// gcForceBlockMode，GC 全程需要 STW。
 	//

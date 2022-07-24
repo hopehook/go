@@ -777,7 +777,7 @@ func scanstack(gp *g, gcw *gcWork) int64 {
 
 	// Scan the stack. Accumulate a list of stack objects.
 	scanframe := func(frame *stkframe, unused unsafe.Pointer) bool {
-		scanframeworker(frame, &state, gcw)
+		(frame, &state, gcw)
 		return true
 	}
 	gentraceback(^uintptr(0), ^uintptr(0), 0, gp, 0, nil, 0x7fffffff, scanframe, nil, 0)
@@ -891,6 +891,7 @@ func scanstack(gp *g, gcw *gcWork) int64 {
 	return int64(stackSize)
 }
 
+// 扫描一个栈帧：本地变量和函数参数、返回值
 // Scan a stack frame: local variables and function arguments/results.
 //go:nowritebarrier
 func scanframeworker(frame *stkframe, state *stackScanState, gcw *gcWork) {
@@ -944,12 +945,14 @@ func scanframeworker(frame *stkframe, state *stackScanState, gcw *gcWork) {
 
 	locals, args, objs := getStackMap(frame, &state.cache, false)
 
+	// 扫描本地变量
 	// Scan local variables if stack frame has been allocated.
 	if locals.n > 0 {
 		size := uintptr(locals.n) * goarch.PtrSize
 		scanblock(frame.varp-size, size, locals.bytedata, gcw, state)
 	}
 
+	// 扫描参数
 	// Scan arguments.
 	if args.n > 0 {
 		scanblock(frame.argp, uintptr(args.n)*goarch.PtrSize, args.bytedata, gcw, state)
