@@ -749,10 +749,9 @@ type p struct {
 
 	// Queue of runnable goroutines. Accessed without lock.
 	// 本地可运行的 goroutine 队列，无锁
-	runqhead uint32
-	runqtail uint32
-	// 使用数组实现的循环队列，最多 256 个 goroutine
-	runq [256]guintptr
+	runqhead uint32        // 队列头
+	runqtail uint32        // 队列尾
+	runq     [256]guintptr // 使用数组实现的循环队列，最多 256 个 goroutine
 
 	// runnext, if non-nil, is a runnable G that was ready'd by
 	// the current G and should be run next instead of what's in
@@ -1258,7 +1257,7 @@ func (w waitReason) String() string {
 }
 
 var (
-	// 保存所有的 m
+	// 所有的 m 都保存这里，，包括 m0
 	allm *m
 
 	// p 的最大值，默认等于 ncpu

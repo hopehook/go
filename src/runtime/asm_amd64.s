@@ -355,15 +355,16 @@ ok:
 	CALL	runtime·check(SB)
 
     // 《初始化 m0 》
-	MOVL	24(SP), AX		// copy argc
-	MOVL	AX, 0(SP)
-	MOVQ	32(SP), AX		// copy argv
-	MOVQ	AX, 8(SP)
-    // 系统参数传递，主要是将系统参数转换传递给程序使用。
+	MOVL	24(SP), AX		// copy argc // AX = argc
+	MOVL	AX, 0(SP)       // argc 放在栈顶
+	MOVQ	32(SP), AX		// copy argv // AX = argv
+	MOVQ	AX, 8(SP)       // argv 放在 SP + 8 的位置
+    // 系统参数传递，主要是处理 操作系统 传递过来的参数和 env
 	CALL	runtime·args(SB)
 	// 系统基本参数设置，主要是获取 CPU 核心数和内存物理页大小。
 	CALL	runtime·osinit(SB)
-	// 进行各种运行时组件的初始化，包含调度器、内存分配器、堆、栈、GC 等一大堆初始化工作。会进行 p 的初始化，并将 m0 和某一个 p 进行绑定。
+	// 进行各种运行时组件的初始化，包含调度器、内存分配器、堆、栈、GC 等一大堆初始化工作。
+	// 会进行 p 的初始化，并将 m0 和某一个 p 进行绑定。
 	CALL	runtime·schedinit(SB)
 
 	// create a new goroutine to start program

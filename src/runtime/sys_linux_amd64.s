@@ -641,19 +641,36 @@ TEXT runtime·sigaltstack(SB),NOSPLIT,$-8
 	RET
 
 // set tls base to DI
+// 这里通过 arch_prctl 系统调用把 m0.tls[1] 的地址设置成了 fs 段的段基址。
+//
+// CPU 中有个叫 fs 的段寄存器与之对应，而每个线程都有自己的一组 CPU 寄存器值，
+// 操作系统在把线程调离 CPU 运行时会帮我们把所有寄存器中的值保存在内存中，
+// 调度线程起来运行时又会从内存中把这些寄存器的值恢复到 CPU，这样，在此之后，
+// 工作线程代码就可以通过 fs 寄存器来找到 m.tls
 TEXT runtime·settls(SB),NOSPLIT,$32
 #ifdef GOOS_android
 	// Android stores the TLS offset in runtime·tls_g.
 	SUBQ	runtime·tls_g(SB), DI
 #else
+
+	// DI 寄存器中存放的是 m.tls[0] 的地址，m 的 tls 成员是一个数组
+    // 下面这一句代码把 DI 寄存器中的地址加 8，为什么要 +8 呢，主要跟 ELF 可执行文件格式中的 TLS 实现的机制有关
+    // 执行下面这句指令之后 DI 寄存器中的存放的就是 m.tls[1] 的地址了
 	ADDQ	$8, DI	// ELF wants to use -8(FS)
 #endif
+
+	// 下面通过 arch_prctl 系统调用设置 FS 段基址
+
+	// SI 存放 arch_prctl 系统调用的第二个参数
 	MOVQ	DI, SI
+	// arch_prctl 的第一个参数
 	MOVQ	$0x1002, DI	// ARCH_SET_FS
+	// 系统调用编号
 	MOVQ	$SYS_arch_prctl, AX
 	SYSCALL
 	CMPQ	AX, $0xfffffffffffff001
 	JLS	2(PC)
+	// 系统调用失败直接 crash
 	MOVL	$0xf1, 0xf1  // crash
 	RET
 
