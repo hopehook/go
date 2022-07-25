@@ -268,6 +268,9 @@ func finishsweep_m() {
 	nextMarkBitArenaEpoch()
 }
 
+// runtime.main 在程序初始化时会创建用于清扫的协程 bgsweep，
+// 到清扫阶段，这个后台的 sweeper 会被加入到 run queue 中，它得到调度执行时会执行清扫任务。
+// 清扫工作也是增量进行的，而这一阶段，并发执行的 mutator 需要分配内存时可能需要先执行一定清扫工作。
 func bgsweep(c chan int) {
 	sweep.g = getg()
 

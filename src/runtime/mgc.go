@@ -281,6 +281,9 @@ func pollFractionalWorkerExit() bool {
 	return float64(selfTime)/float64(delta) > 1.2*gcController.fractionalUtilizationGoal
 }
 
+// work 提供 `全局工作队列缓存`，并记录栈、数据段等需要扫描的 root 节点的相关信息；
+// 还会记录当前是第几个 GC cycle，当前 GC cycle 已经标记了多少字节，已经 STW 了多长时间，
+// 以及控制 GC 向下一阶段过渡的信息等等。
 var work struct {
 	full  lfstack          // lock-free list of full blocks workbuf
 	empty lfstack          // lock-free list of empty blocks workbuf
@@ -509,6 +512,10 @@ func gcWaitOnMark(n uint32) {
 // gcMode indicates how concurrent a GC cycle should be.
 type gcMode int
 
+// Golang 中垃圾回收支持三种模式：
+// （1）gcBackgroundMode，默认模式，标记与清扫过程都是并发执行的；
+// （2）gcForceMode，只在清扫阶段支持并发；
+// （3）gcForceBlockMode，GC 全程需要 STW。
 const (
 	gcBackgroundMode gcMode = iota // concurrent GC and sweep
 	gcForceMode                    // stop-the-world GC now, concurrent sweep
@@ -723,6 +730,7 @@ func gcStart(trigger gcTrigger) {
 
 	// 初始化相关状态和信号
 	gcBgMarkPrepare() // Must happen before assist enable.
+	// 在 work 中记录 bss段、数据段、栈中那些 root 节点的必要信息，为 root 节点标记工作做准备；
 	gcMarkRootPrepare()
 
 	// Mark all active tinyalloc blocks. Since we're
@@ -744,6 +752,7 @@ func gcStart(trigger gcTrigger) {
 	// returns, so make sure we're not preemptible.
 	mp = acquirem()
 
+	// StartTheWorld，进入并发标记阶段。
 	// Concurrent mark.
 	systemstack(func() {
 		// STW: START
@@ -937,6 +946,7 @@ top:
 // disabled.
 func gcMarkTermination(nextTriggerRatio float64) {
 	// Start marktermination (write barrier remains enabled for now).
+	// gcphase 置为 _GCMarkTermination
 	setGCPhase(_GCmarktermination)
 
 	work.heap1 = gcController.heapLive
@@ -982,6 +992,7 @@ func gcMarkTermination(nextTriggerRatio float64) {
 			endCheckmarks()
 		}
 
+		// gphase 置为 _GCOff
 		// 关闭写屏障
 		// marking is complete so we can turn the write barrier off
 		setGCPhase(_GCoff)
@@ -1203,6 +1214,17 @@ type gcBgMarkWorkerNode struct {
 	m muintptr
 }
 
+// 后台 mark worker 得到调度执行时，会根据 gcController 中记录的相关信息决定 worker 的类型，
+// 这主要影响 worker 的让出条件。但不管什么类型的 worker 都会先执行未完成的 root 标记工作，扫描协程栈时，
+// 只会暂停对应协程，通过 stacmap 标记扫描，结束后再将其恢复。
+//
+// root 标记工作完成后,需要继续追踪的 root 节点已经被记录到工作队列中，后台 mark worker 会继续处理工作队列中的节点，它们就是所谓的灰色节点。
+//
+// 通过灰色节点可能发现更多灰色节点加入工作队列，处理完的灰色节点成为黑色节点。
+//
+// 标记阶段，mutator 与 GC 并发执行，写入指针时会触发写屏障，把相关节点记录到写屏障缓冲区中，按需 flush 到工作队列。
+// 而且，在 GC 标记任务完成前，新分配的对象都会被直接着为黑色。
+// 当没有 root 标记任务与灰色节点时，GC 就可以进入 Mark Termination 阶段了。
 func gcBgMarkWorker() {
 	gp := getg()
 

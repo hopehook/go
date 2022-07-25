@@ -81,6 +81,11 @@ func init() {
 //
 // All fields of gcController are used only during a single mark
 // cycle.
+// gcController 主要用于支持 `标记工作` 顺利执行。
+//
+// gcController 会记录一个 mark cycle(标记周期)中不同类型的 mark worker是 否还需要启动，
+// 是否需要进行 assist mark（辅助标记），已经执行了多少扫描工作，以及不同类型的 mark worker
+// 分别执行了多长时间等信息。
 var gcController gcControllerState
 
 type gcControllerState struct {

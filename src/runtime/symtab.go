@@ -1150,6 +1150,7 @@ func readvarint(p []byte) (read uint32, val uint32) {
 	return n, v
 }
 
+// 协程栈也有对应的元数据存储在 stackmap 中，扫描协程栈时，通过对应元数据可以知道栈上的局部变量、参数、返回值等对象中哪些是存活的指针。
 type stackmap struct {
 	n        int32   // number of bitmaps
 	nbit     int32   // number of bits in each bitmap

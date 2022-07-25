@@ -992,6 +992,13 @@ const (
 	gcDrainFractional
 )
 
+// mark worker 执行 GC 标记工作消耗工作队列时, 会处理本地工作队列和全局工作缓存中工作量的均衡问题（runtime.gcDrain和runtime.gcDrainN中）。
+//	（1）如果 `全局工作缓存` 为空，就把当前 p 的工作分一些到全局工作队列中。具体做法是：
+//		如果 wbuf2 不为空，就把 wbuf2 整个 flush 到全局工作缓存中；
+//		如果 wbuf2 为空，wbuf1 中元素个数大于4，就把 wbuf1 中一半的工作放到全局工作缓存中。
+//	（2）如果 `本地工作队列` 为空，就从全局工作缓存获取任务放到本地队列中。
+//
+//	通过区分本地工作队列与全局工作缓存，缓解了执行并发标记工作时操作工作队列的竞争问题。
 // gcDrain scans roots and objects in work buffers, blackening grey
 // objects until it is unable to get more work. It may return before
 // GC is done; it's the caller's responsibility to balance work from

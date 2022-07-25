@@ -219,6 +219,10 @@ type mheap struct {
 
 var mheap_ mheap
 
+// mheap 中每个 arena 对应一个 HeapArena，记录 arena 的元数据信息。HeapArena 中有一个 bitmap 和一个 spans 字段。
+//
+// 基于 heapArena 记录的元数据信息，我们只要知道一个对象的地址，就可以根据 HeapArena.bitmap 信息扫描它内部是否含有指针；
+// 也可以根据对象地址计算出它在哪一页，然后通过 HeapArena.spans 信息查到该对象存在哪一个 mspan 中。
 // A heapArena stores metadata for a heap arena. heapArenas are stored
 // outside of the Go heap and accessed via the mheap_.arenas index.
 //
@@ -227,6 +231,9 @@ type heapArena struct {
 	// bitmap stores the pointer/scalar bitmap for the words in
 	// this arena. See mbitmap.go for a description. Use the
 	// heapBits type to access this.
+	// bitmap 中每两个 bit 对应标记 arena 中一个指针大小的 word，也就是说 bitmap 中一个 byte 可以标记 arena 中连续四个指针大小的内存。
+	// 每个 word 对应的两个 bit 中，低位 bit 用于标记是否为指针，0 为非指针，1 为指针；
+	// 高位 bit 用于标记是否要继续扫描，高位 bit 为1就代表扫描完当前 word 并不能完成当前数据对象的扫描。
 	bitmap [heapArenaBitmapBytes]byte
 
 	// spans maps from virtual address page ID within this arena to *mspan.
@@ -240,6 +247,7 @@ type heapArena struct {
 	// known to contain in-use or stack spans. This means there
 	// must not be a safe-point between establishing that an
 	// address is live and looking it up in the spans array.
+	// spans 是一个 *mspan 类型的数组，用于记录当前 arena 中每一页对应到哪一个 mspan。
 	spans [pagesPerArena]*mspan
 
 	// pageInUse is a bitmap that indicates which spans are in
@@ -349,8 +357,8 @@ const (
 // mSpanState.
 var mSpanStateNames = []string{
 	"mSpanDead",
-	"mSpanInUse",
-	"mSpanManual",
+	"mSpanInUse",    // 分配给 堆 heap
+	"mSpanManual",   // 分配给 栈 stack
 	"mSpanFree",
 }
 
@@ -377,6 +385,12 @@ type mSpanList struct {
 	last  *mspan // last span in list, or nil if none
 }
 
+// 而每个 span 都对应两个位图标记：mspan.allocBits 和 mspan.gcmarkBits。
+// （1）allocBits 中每一位用于标记一个对象存储单元是否已分配。
+// （2）gcmarkBits 中每一位用于标记一个对象 `是否存活`。
+//
+// 每个 span 都只存储一种大小的元素，类型规格记录在 mspan.spanClass中，
+// 类型规格覆盖了小于等于 32K 的 66 种大小，类型编号 1~66。大于 32K 的大对象直接在 mheap 中分配，对应 mspan 的类型编号为 0，这样一共有67种。
 //go:notinheap
 type mspan struct {
 	next *mspan     // next span in list, or nil if none // 双向链表
@@ -440,7 +454,13 @@ type mspan struct {
 	// out memory.
 	// 标记内存是否分配
 	allocBits *gcBits
+
 	// 标记是否存活
+	//
+	// Golang中GC的三色标记
+	//（1）着为 `灰色` 对应的操作就是把指针对应的 gcmarkBits 标记位置为 1 并加入 `工作队列`；
+	//（2）着为 `黑色` 对应的操作就是把指针对应的 gcmarkBits 标记位置为 1。
+	//（3）`白色` 对象就是那些 gcMarkBits 中标记为 0 的对象。
 	gcmarkBits *gcBits
 
 	// sweep generation:
@@ -457,7 +477,11 @@ type mspan struct {
 
 	// noscan 表示没有指针，不需要 GC 扫描
 	spanclass   spanClass     // size class and noscan (uint8)
+
+	// 由于协程栈也是从堆上分配的，也在 mheap 管理的这些 span 中，
+	// mspan.state.mSpanState 会记录该 span 是用作堆内存，还是用作栈内存。
 	state       mSpanStateBox // mSpanInUse etc; accessed atomically (get/set methods)
+
 	needzero    uint8         // needs to be zeroed before allocation
 	elemsize    uintptr       // computed from sizeclass or from npages
 	limit       uintptr       // end of data in span
@@ -529,6 +553,8 @@ func recordspan(vh unsafe.Pointer, p unsafe.Pointer) {
 // noscan spanClass contains only noscan objects, which do not contain
 // pointers and thus do not need to be scanned by the garbage
 // collector.
+// mspan.spanClass 除了记录对应 mspan 存储的元素规格类型外，还记录着该 span 存储的元素是否含有指针，
+// 含有指针的属于 scan 类型，不含指针的属于 no-scan 类型。对于 no-scan 类型的 mspan，GC 并不关心。
 type spanClass uint8
 
 const (
