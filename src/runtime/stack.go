@@ -366,6 +366,7 @@ func stackcache_clear(c *mcache) {
 	}
 }
 
+// `栈` 内存分配函数：stackalloc
 // stackalloc allocates an n byte stack.
 //
 // stackalloc must run on the system stack because it uses per-P
