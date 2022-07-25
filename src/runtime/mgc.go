@@ -181,6 +181,8 @@ func gcenable() {
 	memstats.enablegc = true // now that runtime is initialized, GC is okay
 }
 
+// gcphase 是垃圾收集器当前处于的阶段，可能处于 _GCoff、_GCmark 和 _GCmarktermination，
+// Goroutine 在读取或者修改该阶段时需要保证原子性；
 // Garbage collector phase.
 // Indicates to write barrier and synchronization task to perform.
 var gcphase uint32
