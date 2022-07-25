@@ -202,6 +202,9 @@ func wbBufFlush(dst *uintptr, src uintptr) {
 	})
 }
 
+// wbBufFlush1 这个函数才是 hook 写操作想要做的事情，这个函数做两个事情：
+//  1. 批量循环处理 buf 队列里的值;
+//  2. shade（这个值）；
 // wbBufFlush1 flushes p's write barrier buffer to the GC work queue.
 //
 // This must not have write barriers because it is part of the write
@@ -247,6 +250,8 @@ func wbBufFlush1(_p_ *p) {
 	// un-shaded stacks and flush after each stack scan.
 	gcw := &_p_.gcw
 	pos := 0
+
+	// 循环批量处理队列里的值，这个就是之前在 gcWriteBarrier 赋值的
 	for _, ptr := range ptrs {
 		if ptr < minLegalPointer {
 			// nil pointers are very common, especially
@@ -284,6 +289,17 @@ func wbBufFlush1(_p_ *p) {
 	}
 
 	// Enqueue the greyed objects.
+	// 置灰色（投入灰色的队列），这就是我们的目的，对象在这里面我们就不怕了，我们要扫描的就是这个队列；
+	//
+	// Q: 在 golang 里面，到底什么样的是灰色对象？
+	// A: 只要在扫描队列中的对象，就是灰色的。
+	//
+	//
+	// golang 内部对象并没有保存颜色的属性，三色只是对他们的状态的描述，是通过一个队列 + 掩码位图 来实现的：
+	//
+	// 白色对象：对象所在 span 的 gcmarkBits 中对应的 bit 为 0，不在队列；
+	// 灰色对象：对象所在 span 的 gcmarkBits 中对应的 bit 为 1，且对象在扫描队列 _p_.gcw 中；
+	// 黑色对象：对象所在 span 的 gcmarkBits 中对应的 bit 为 1，且对象已经从扫描队列中处理并摘除掉；
 	gcw.putBatch(ptrs[:pos])
 
 	_p_.wbBuf.reset()

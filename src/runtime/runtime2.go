@@ -843,7 +843,7 @@ type p struct {
 	// TODO: Consider caching this in the running G.
 	// 写屏障缓冲（p.wbBuf）
 	//
-	// mutator 分配内存时，触发写屏障时，并不会直接操作工作队列，
+	// mutator 分配内存时，触发写屏障时（编译器生成），并不会直接操作工作队列，
 	// 而是把相关指针写入当前 p 的写屏障缓冲区(p.wbBuf)中。
 	// 当 wbBuf 已满或 mark worker 通过工作队列获取不到任务时,
 	// 会把写屏障缓冲内容 flush 到工作缓存中,这样避免了 mutator 与 GC 之间关于写屏障记录的竞争问题。

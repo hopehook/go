@@ -1195,6 +1195,10 @@ func gcDrainN(gcw *gcWork, scanWork int64) int64 {
 	return workFlushed + gcw.heapScanWork
 }
 
+// bo ： 开始地址
+// n0 ：内存块长度（结束边界），字节数
+// ptrmask ：掩码
+//
 // scanblock scans b as scanobject would, but using an explicit
 // pointer bitmap instead of the heap bitmap.
 //
@@ -1212,16 +1216,24 @@ func scanblock(b0, n0 uintptr, ptrmask *uint8, gcw *gcWork, stk *stackScanState)
 
 	for i := uintptr(0); i < n; {
 		// Find bits for the next word.
+		// 获取位图
 		bits := uint32(*addb(ptrmask, i/(goarch.PtrSize*8)))
+
+		// 如果整个 bits 为 0 ，就不需要往下走了，跳过 8 个指针的长度（ 8*8 = 64 ）；
+		// 这里也说明下面是每 8 个指针处理一批；
 		if bits == 0 {
 			i += goarch.PtrSize * 8
 			continue
 		}
+
+		// 8 个指针处理
 		for j := 0; j < 8 && i < n; j++ {
 			if bits&1 != 0 {
 				// Same work as in scanobject; see comments there.
+				// 把对应内存地址里面存储的值取出来
 				p := *(*uintptr)(unsafe.Pointer(b + i))
 				if p != 0 {
+					// 如果是指针，那么就投入扫描队列，置灰色（ greyobject 这个和前面 置灰 是一样的，只是封装的函数略有不同）
 					if obj, span, objIndex := findObject(p, b, i); obj != 0 {
 						greyobject(obj, b, i, span, gcw, objIndex)
 					} else if stk != nil && p >= stk.stack.lo && p < stk.stack.hi {
@@ -1229,7 +1241,11 @@ func scanblock(b0, n0 uintptr, ptrmask *uint8, gcw *gcWork, stk *stackScanState)
 					}
 				}
 			}
+
+			// bit 位图移去一 bit
 			bits >>= 1
+
+			// 内存地址前进一个指针长度（8）
 			i += goarch.PtrSize
 		}
 	}

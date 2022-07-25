@@ -1680,6 +1680,21 @@ TEXT ·sigpanic0(SB),NOSPLIT,$0-0
 #endif
 	JMP	·sigpanic<ABIInternal>(SB)
 
+// Q: 写屏障代码触发点
+//  1. 写屏障的代码在 `编译` 期间生成好，之后不会再变化;
+//  2. 堆上对象赋值才会生成写屏障；
+//  3. 哪些对象分配在栈上，哪些分配在堆上？也是编译期间由编译器决定，这个过程叫做 “逃逸分析”；
+//
+// Q: runtime·gcWriteBarrier 函数干啥的?
+//  1. 执行写请求（原本就要做的事情）
+//  2. 处理 GC 相关的逻辑（投队列，置灰色保护）
+//
+// Q: 为什么 gcWriteBarrier 这个函数怎么复杂？
+//   其实是做的一个优化处理，每次触发写屏障的时候（hook），我们当然可以直接 shade（ptr），
+// 但是我们知道，毕竟这段写屏障的代码是比业务多出来的，这些都是开销，我们能快就快，
+// 每次这样做太零散，我们可以攒一批，一批队列满了，一批去入队，置灰色。
+// 这样效率更高。一般情况下，只需要简单入队就行了，buf 满了之后，才 flush 去批量置灰，
+// 这样写屏障对业务的影响就更小了，wbBuf 就是这个队列的实现。
 // gcWriteBarrier performs a heap pointer write and informs the GC.
 //
 // gcWriteBarrier does NOT follow the Go ABI. It takes two arguments:
@@ -1701,8 +1716,11 @@ TEXT runtime·gcWriteBarrier<ABIInternal>(SB),NOSPLIT,$112
 	// Increment wbBuf.next position.
 	LEAQ	16(R12), R12
 	MOVQ	R12, (p_wbBuf+wbBuf_next)(R13)
+	// 检查写屏障 wbBuffer 队列是否满？
 	CMPQ	R12, (p_wbBuf+wbBuf_end)(R13)
 	// Record the write.
+	// 赋值的前后两个值都会被入队
+	// 把 value 存到指定 wbBuffer 位置
 	MOVQ	AX, -16(R12)	// Record value
 	// Note: This turns bad pointer writes into bad
 	// pointer reads, which could be confusing. We could avoid
@@ -1710,11 +1728,14 @@ TEXT runtime·gcWriteBarrier<ABIInternal>(SB),NOSPLIT,$112
 	// take care of the vast majority of these. We could
 	// patch this up in the signal handler, or use XCHG to
 	// combine the read and the write.
+	// 把 *slot 存到指定 buffer 位置
 	MOVQ	(DI), R13
 	MOVQ	R13, -8(R12)	// Record *slot
 	// Is the buffer full? (flags set in CMPQ above)
+	// 如果 wbBuffer 队列满了，那么就下刷处理，比如置灰，置黑等操作
 	JEQ	flush
 ret:
+    // 赋值：*slot = val
 	MOVQ	96(SP), R12
 	MOVQ	104(SP), R13
 	// Do the write.
@@ -1752,6 +1773,7 @@ flush:
 	MOVQ	R15, 88(SP)
 
 	// This takes arguments DI and AX
+	//  队列满了，统一处理，这个其实是一个批量优化手段
 	CALL	runtime·wbBufFlush(SB)
 
 	MOVQ	0(SP), DI

@@ -1106,8 +1106,8 @@ func newstack() {
 		throw("runtime: split stack overflow")
 	}
 
-	// 如果需要对栈进行调整
 	if preempt {
+		// g0 栈是系统调度栈，不能抢占；
 		if gp == thisg.m.g0 {
 			throw("runtime: preempt g0")
 		}
