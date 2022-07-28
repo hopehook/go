@@ -829,6 +829,11 @@ func (s *mspan) countAlloc() int {
 // bits that belong to neighboring objects. Also, on weakly-ordered
 // machines, callers must execute a store/store (publication) barrier
 // between calling this function and making the object reachable.
+
+// 给 gc 扫描做准备，对分配的内存块做好标记，这小块内存中，哪些位置是指针，我们用一个 bitmap gcdata 对应记录下来
+//
+// 根据编译期间针对每个 struct 生成的 type 结构，来设置 gc 需要扫描的位图，也就是指针 bitmap gcdata。
+//（旁白：每分配一块内存出去，我都会有一个 bitmap 对应到这个内存块，指明哪些地方有指针）。
 func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 	const doubleCheck = false // slow but helpful; enable to test modifications to this code
 
@@ -863,7 +868,10 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 		return
 	}
 
+	// 最重要的两个步骤：
+	// 通过分配地址反查获取到 heap 的 heapBits 结构（回忆下 golang 的内存地址管理）
 	h := heapBitsForAddr(x)
+	// 获取到类型的指针 bitmap；
 	ptrmask := typ.gcdata // start of 1-bit pointer mask (or GC program, handled below)
 
 	// 2-word objects only have 4 bitmap bits and 3-word objects only have 6 bitmap bits.
@@ -1011,6 +1019,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 		hb    uintptr // bits being prepared for *hbitp
 	)
 
+	// 把 h.bitp 这个堆上的 bitmap 取出来；
 	hbitp = h.bitp
 
 	// Handle GC program. Delayed until this part of the code
@@ -1068,6 +1077,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 	// but once the real bits are shifted out, b will supply as many
 	// zero bits as we try to read, which is exactly what we need.
 
+	// 该类型的指针 bitmap
 	p = ptrmask
 	if typ.size < dataSize {
 		// Filling in bits for an array of typ.
@@ -1126,12 +1136,17 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 		}
 	}
 	if p != nil {
+		// 把 bitmap 第一个字节保存起来
 		b = uintptr(*p)
+		// p 指向下一个字节
 		p = add1(p)
 		nb = 8
 	}
 
+	// 我们的是简单的 Struct 结构（48==48）
 	if typ.size == dataSize {
+		// nw == 5 == 40/8，说明扫描到第 5 个字段为止即可。
+		// ptrdata 指明有指针的范围在[0, 40]以内，再往外确定就没有指针字段了；
 		// Single entry: can stop once we reach the non-pointer data.
 		nw = typ.ptrdata / goarch.PtrSize
 	} else {
@@ -1225,6 +1240,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 	// To avoid repeated adjustment of nb, we subtract out the 4 bits we're going to
 	// use in the first half of the loop right now, and then we only adjust nb explicitly
 	// if the 8 bits used by each iteration isn't balanced by 8 bits loaded mid-loop.
+	// 处理完了前 4 bit，接下来处理后 4 bit
 	nb -= 4
 	for {
 		// Emit bitmap byte.
@@ -1235,6 +1251,7 @@ func heapBitsSetType(x, size, dataSize uintptr, typ *_type) {
 		hb = b & bitPointerAll
 		hb |= bitScanAll
 		if w += 4; w >= nw {
+			// 处理完了，有指针的字段都包含在已经处理的 ptrmask 范围内了
 			break
 		}
 		*hbitp = uint8(hb)

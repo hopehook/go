@@ -32,25 +32,41 @@ const (
 // ../reflect/type.go:/^type.rtype.
 // ../internal/reflectlite/type.go:/^type.rtype.
 type _type struct {
-	// 类型大小
+	// 类型大小/长度
 	size    uintptr
+
+	// `指针截止` 的长度位置
 	ptrdata uintptr // size of memory prefix holding all pointers
+
 	// 类型的 hash 值
 	hash uint32
+
 	// 类型的 flag，和反射相关
 	tflag tflag
+
 	// 内存对齐相关
 	align      uint8
 	fieldAlign uint8
+
 	// 类型的编号，有 bool, slice, struct 等等等等
+	// kind 枚举定义在 runtime/typekind.go 文件里；
 	kind uint8
+
 	// function for comparing objects of this type
 	// (ptr to object A, ptr to object B) -> ==?
 	equal func(unsafe.Pointer, unsafe.Pointer) bool
+
 	// gcdata stores the GC type data for the garbage collector.
 	// If the KindGCProg bit is set in kind, gcdata is a GC program.
 	// Otherwise it is a ptrmask bitmap. See mbitmap.go for details.
 	// gc 相关
+	//
+	// 这个就是指针的 bitmap，因为编译器他在编译分析的时候，肯定就知道了所有的类型结构，那么自然知道所有的指针位置。
+	// gcdata 是 *byte 类型（byte 数组），当前值是 20，20 转换成二进制数据就是 00010100 ，这个眼熟不？
+	// 这个你要从右往左看就是 00101000（从低 bit 往高 bit 看），这个不就是刚好是 TestStruct 的指针 bitmap 嘛，
+	// 每个 bit 表示一个指针大小（8 字节）的内存，00101000 第 3 个 bit 和第 5 个 bit 是 1，表示
+	// 第 3 个字段（第 3 个 8 字节的位置）和第 5 个字段（第 5 个 8 字节的位置）是存储的是 `指针类型`，
+	// 这里刚好就和 TestStruct.f2 和 TestStruct.f4 对应起来。
 	gcdata    *byte
 	str       nameOff
 	ptrToThis typeOff

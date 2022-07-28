@@ -149,6 +149,9 @@ func gcMarkRootCheck() {
 // ptrmask for an allocation containing a single pointer.
 var oneptrmask = [...]uint8{1}
 
+
+// 扫描以 markroot 开始，从栈，全局变量，寄存器等根对象开始扫描，创建一个 `有向引用图`，把根对象投入到队列中
+//
 // markroot scans the i'th root.
 //
 // Preemption must be disabled (because this uses a gcWork).
@@ -699,6 +702,11 @@ func gcFlushBgCredit(scanWork int64) {
 	unlock(&work.assistQueue.lock)
 }
 
+
+// 1. 找到这个 goroutine 栈上的内存对象（一个个找，一个个处理）；
+// 2. 找到对象之后，获取到这个对象的 type 结构，然后取出 type.ptrdata, type.gcdata ，从而我们就知道扫描的内存范围，和内存块上指针的所在位置；
+// 3. 调用 scanblock 扫描这个内存块；
+//
 // scanstack scans gp's stack, greying all pointers found on the stack.
 //
 // For goexperiment.PacerRedesign:
@@ -814,16 +822,21 @@ func scanstack(gp *g, gcw *gcWork) int64 {
 	// The state's pointer queue prioritizes precise pointers over
 	// conservative pointers so that we'll prefer scanning stack
 	// objects precisely.
+	//
+	// 扫描栈上所有的可达的对象
 	state.buildIndex()
 	for {
 		p, conservative := state.getPtr()
 		if p == 0 {
 			break
 		}
+		// 获取一个到栈上对象
 		obj := state.findObject(p)
 		if obj == nil {
 			continue
 		}
+
+		// 获取到这个对象的类型
 		r := obj.r
 		if r == nil {
 			// We've already scanned this object.
@@ -839,6 +852,8 @@ func scanstack(gp *g, gcw *gcWork) int64 {
 			println()
 			printunlock()
 		}
+
+		// 获取到这个类型内存块的 ptr 的 bitmap（编译期间编译器设置好）
 		gcdata := r.gcdata()
 		var s *mspan
 		if r.useGCProg() {
@@ -859,6 +874,10 @@ func scanstack(gp *g, gcw *gcWork) int64 {
 		if conservative {
 			scanConservative(b, r.ptrdata(), gcdata, gcw, &state)
 		} else {
+			// 扫描这个对象
+			// 起点：对象起始地址 => state.stack.lo + obj.off
+			// 终点：t.ptrdata （还记得这个吧，这个指明了指针所在内的边界）
+			// 指针 bitmap：t.gcdata
 			scanblock(b, r.ptrdata(), gcdata, gcw, &state)
 		}
 
@@ -992,6 +1011,9 @@ const (
 	gcDrainFractional
 )
 
+// 从队列里消费对象，并且扫描这个对象, 扫描调用的就是 scanobject 函数
+//
+//
 // mark worker 执行 GC 标记工作消耗工作队列时, 会处理本地工作队列和全局工作缓存中工作量的均衡问题（runtime.gcDrain和runtime.gcDrainN中）。
 //	（1）如果 `全局工作缓存` 为空，就把当前 p 的工作分一些到全局工作队列中。具体做法是：
 //		如果 wbuf2 不为空，就把 wbuf2 整个 flush 到全局工作缓存中；
@@ -999,6 +1021,7 @@ const (
 //	（2）如果 `本地工作队列` 为空，就从全局工作缓存获取任务放到本地队列中。
 //
 //	通过区分本地工作队列与全局工作缓存，缓解了执行并发标记工作时操作工作队列的竞争问题。
+//
 // gcDrain scans roots and objects in work buffers, blackening grey
 // objects until it is unable to get more work. It may return before
 // GC is done; it's the caller's responsibility to balance work from
@@ -1195,7 +1218,13 @@ func gcDrainN(gcw *gcWork, scanWork int64) int64 {
 	return workFlushed + gcw.heapScanWork
 }
 
-// bo ： 开始地址
+// 1. scanblock 这个函数非常简单，只扫描给定的一段内存块；
+// 2. 大循环每次递进 64 个字节，小循环每次递进 8 字节；
+// 3. 是否作为指针扫描是由 ptrmask 指定的；
+// 4. 只要长度和地址是对齐的，指针类型按 8 字节对齐，那么我们按照 8 字节递进扫描一定是全方位覆盖，不会漏掉一个对象的；
+// 5. 再次提醒下，uintptr 是数值类型，编译器不会标识成指针类型，所以不受扫描保护；
+//
+// bo ：开始地址
 // n0 ：内存块长度（结束边界），字节数
 // ptrmask ：掩码
 //
@@ -1214,9 +1243,12 @@ func scanblock(b0, n0 uintptr, ptrmask *uint8, gcw *gcWork, stk *stackScanState)
 	b := b0
 	n := n0
 
+	// 扫描到长度 n 为止；
 	for i := uintptr(0); i < n; {
 		// Find bits for the next word.
-		// 获取位图
+		//
+		// 每个 bit 标识一个 8 字节，8 个 bit （1个字节）标识 64 个字节；
+		// 这里计算到合适的 bits
 		bits := uint32(*addb(ptrmask, i/(goarch.PtrSize*8)))
 
 		// 如果整个 bits 为 0 ，就不需要往下走了，跳过 8 个指针的长度（ 8*8 = 64 ）；
@@ -1228,6 +1260,7 @@ func scanblock(b0, n0 uintptr, ptrmask *uint8, gcw *gcWork, stk *stackScanState)
 
 		// 8 个指针处理
 		for j := 0; j < 8 && i < n; j++ {
+			// bits 非 0，说明内部有指针引用，就必须一个个扫描查看；
 			if bits&1 != 0 {
 				// Same work as in scanobject; see comments there.
 				// 把对应内存地址里面存储的值取出来
@@ -1251,6 +1284,12 @@ func scanblock(b0, n0 uintptr, ptrmask *uint8, gcw *gcWork, stk *stackScanState)
 	}
 }
 
+// scanobject 的目的其实很简单：就是进一步发现引用关系，尽可能的把可达对象全覆盖；
+// 这个地方就没有直接使用到 type ，而是使用到 mallocgc 时候的准备成果（ heapBitsSetType 设置），每个内存块都对应了一个指针的 bitmap；
+//
+// b   : 是对象的内存地址
+// gcw : 是扫描队列的封装
+//
 // scanobject scans the object starting at b, adding pointers to gcw.
 // b must point to the beginning of a heap object or an oblet.
 // scanobject consults the GC bitmap for the pointer mask and the
@@ -1269,8 +1308,14 @@ func scanobject(b uintptr, gcw *gcWork) {
 	// b is either the beginning of an object, in which case this
 	// is the size of the object to scan, or it points to an
 	// oblet, in which case we compute the size to scan below.
+
+	// 通过对象地址 b 获取到这块内存地址对应的 hbits
 	hbits := heapBitsForAddr(b)
+
+	// 通过对象地址 b 获取到这块内存地址所在的 span
 	s := spanOfUnchecked(b)
+
+	// span 的元素大小
 	n := s.elemsize
 	if n == 0 {
 		throw("scanobject n == 0")
@@ -1312,21 +1357,30 @@ func scanobject(b uintptr, gcw *gcWork) {
 		}
 	}
 
+	// 每 8 个字节处理递进处理(因为堆上对象分配都是 span，每个 span 的内存块都是定长的，所以扫描边界就是 span.elemsize )
 	var i uintptr
 	for i = 0; i < n; i, hbits = i+goarch.PtrSize, hbits.next() {
 		// Load bits once. See CL 22712 and issue 16973 for discussion.
+		// 获取到内存块的 bitmap
 		bits := hbits.bits()
+
+		// 确认该整个内存块没有指针，直接跳出，节约时间；
 		if bits&bitScan == 0 {
 			break // no more pointers in this object
 		}
+
+		// 确认 bits 对应的小块内存没有指针，所以可以直接到下一轮
+		// 如果是指针，那么就往下看看这 8 字节啥情况
 		if bits&bitPointer == 0 {
 			continue // not a pointer
 		}
 
 		// Work here is duplicated in scanblock and above.
 		// If you make changes here, make changes there too.
+		// 把这 8 字节里面存的值取出来；
 		obj := *(*uintptr)(unsafe.Pointer(b + i))
 
+		// 如果 obj 有值，并且合法（不在一个 span 的内存块里）
 		// At this point we have extracted the next potential pointer.
 		// Quickly filter out nil and pointers back to the current object.
 		if obj != 0 && obj-b >= n {
@@ -1339,6 +1393,7 @@ func scanobject(b uintptr, gcw *gcWork) {
 			// heap. In this case, we know the object was
 			// just allocated and hence will be marked by
 			// allocation itself.
+			// 如果 obj 指向一个有效的对象，那么把这个对象置灰色，投入扫描队列，等待处理
 			if obj, span, objIndex := findObject(obj, b, i); obj != 0 {
 				greyobject(obj, b, i, span, gcw, objIndex)
 			}
