@@ -114,6 +114,7 @@ func (fd *FD) Close() error {
 	// the final decref will close fd.sysfd. This should happen
 	// fairly quickly, since all the I/O is non-blocking, and any
 	// attempts to block in the pollDesc will return errClosing(fd.isFile).
+	//
 	// 调用 runtime_pollUnblock 函数 unblock pd 中的读写 goroutine。
 	// 这里会调用 goready
 	fd.pd.evict()
