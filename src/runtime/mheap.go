@@ -232,8 +232,9 @@ type heapArena struct {
 	// this arena. See mbitmap.go for a description. Use the
 	// heapBits type to access this.
 	// bitmap 中每两个 bit 对应标记 arena 中一个指针大小的 word，也就是说 bitmap 中一个 byte 可以标记 arena 中连续四个指针大小的内存。
-	// 每个 word 对应的两个 bit 中，低位 bit 用于标记是否为指针，0 为非指针，1 为指针；
-	// 高位 bit 用于标记是否要继续扫描，高位 bit 为1就代表扫描完当前 word 并不能完成当前数据对象的扫描。
+	//
+	// 每个 word 对应的两个 bit 中，低位 bit 用于标记是否为 `指针`，0 为非指针，1 为指针；
+	// 高位 bit 用于标记是 `否要继续扫描`，高位 bit 为 1 就代表扫描完当前 word 并不能完成当前数据对象的扫描。
 	bitmap [heapArenaBitmapBytes]byte
 
 	// spans maps from virtual address page ID within this arena to *mspan.
@@ -247,6 +248,7 @@ type heapArena struct {
 	// known to contain in-use or stack spans. This means there
 	// must not be a safe-point between establishing that an
 	// address is live and looking it up in the spans array.
+	//
 	// spans 是一个 *mspan 类型的数组，用于记录当前 arena 中每一页对应到哪一个 mspan。
 	spans [pagesPerArena]*mspan
 
@@ -390,7 +392,7 @@ type mSpanList struct {
 // （2）gcmarkBits 中每一位用于标记一个对象 `是否存活`。
 //
 // 每个 span 都只存储一种大小的元素，类型规格记录在 mspan.spanClass中，
-// 类型规格覆盖了小于等于 32K 的 66 种大小，类型编号 1~66。大于 32K 的大对象直接在 mheap 中分配，对应 mspan 的类型编号为 0，这样一共有67种。
+// 类型规格覆盖了小于等于 32K 的 66 种大小，类型编号 1~66。大于 32K 的大对象直接在 mheap 中分配，对应 mspan 的类型编号为 0，这样一共有 67 种。
 //go:notinheap
 type mspan struct {
 	next *mspan     // next span in list, or nil if none // 双向链表
@@ -452,10 +454,11 @@ type mspan struct {
 	// The sweep will free the old allocBits and set allocBits to the
 	// gcmarkBits. The gcmarkBits are replaced with a fresh zeroed
 	// out memory.
-	// 标记内存是否分配
+	//
+	// 标记内存是否 分配
 	allocBits *gcBits
 
-	// 标记是否存活
+	// 标记是否 存活
 	//
 	// Golang中GC的三色标记
 	//（1）着为 `灰色` 对应的操作就是把指针对应的 gcmarkBits 标记位置为 1 并加入 `工作队列`；
