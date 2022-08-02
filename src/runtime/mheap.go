@@ -463,7 +463,7 @@ type mspan struct {
 	// Golang中GC的三色标记
 	//（1）着为 `灰色` 对应的操作就是把指针对应的 gcmarkBits 标记位置为 1 并加入 `工作队列`；
 	//（2）着为 `黑色` 对应的操作就是把指针对应的 gcmarkBits 标记位置为 1。
-	//（3）`白色` 对象就是那些 gcMarkBits 中标记为 0 的对象。
+	//（3）`白色` 对象就是那些 gcmarkBits 中标记为 0 的对象。
 	gcmarkBits *gcBits
 
 	// sweep generation:
@@ -482,7 +482,7 @@ type mspan struct {
 	spanclass   spanClass     // size class and noscan (uint8)
 
 	// 由于协程栈也是从堆上分配的，也在 mheap 管理的这些 span 中，
-	// mspan.state.mSpanState 会记录该 span 是用作堆内存，还是用作栈内存。
+	// mspan.state.mSpanState 会记录该 span 是用作 `堆内存`，还是用作 `栈内存`。
 	state       mSpanStateBox // mSpanInUse etc; accessed atomically (get/set methods)
 
 	needzero    uint8         // needs to be zeroed before allocation

@@ -846,7 +846,9 @@ type p struct {
 	// mutator 分配内存时，触发写屏障时（编译器生成），并不会直接操作工作队列，
 	// 而是把相关指针写入当前 p 的写屏障缓冲区(p.wbBuf)中。
 	// 当 wbBuf 已满或 mark worker 通过工作队列获取不到任务时,
-	// 会把写屏障缓冲内容 flush 到工作缓存中,这样避免了 mutator 与 GC 之间关于写屏障记录的竞争问题。
+	// 会把写屏障缓冲内容 flush 到 `工作缓存` 中,这样避免了 mutator 与 GC 之间关于写屏障记录的竞争问题。
+	//
+	// 注意：wbBuf 也会被 mark worker 扫描
 	wbBuf wbBuf
 
 	runSafePointFn uint32 // if 1, run sched.safePointFn at next safe point
