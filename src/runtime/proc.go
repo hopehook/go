@@ -1243,7 +1243,7 @@ func stopTheWorldWithSema() {
 	sched.stopwait = gomaxprocs
 	// 设置停止标志， 让 schedule 之类的调用主动休眠 M
 	atomic.Store(&sched.gcwaiting, 1)
-	// 向所有正在运行的 G 发出抢占调度
+	// 向所有 `正在运行的` G 发出抢占调度
 	preemptall()
 	// stop current P
 	// 暂停当前 P
@@ -1343,7 +1343,7 @@ func startTheWorldWithSema(emitTraceEvent bool) int64 {
 
 	worldStarted()
 
-	// 循环所有 P，唤醒它们开始工作
+	// 循环所有 P，唤醒 M 开始工作
 	for p1 != nil {
 		p := p1
 		p1 = p1.link.ptr()
@@ -2575,8 +2575,8 @@ func mspinning() {
 //
 // Must not have write barriers because this may be called without a P.
 //go:nowritebarrierrec
-// startm 简单来说是判断是否有空闲的P，如果没有则返回，如果有空闲的P，再尝试看有没有空闲的 M，有的话，唤醒该 M 起来工作。
-// 这样看起来好像 M 的个数会被 P 的个数限制，但其实不一定，因为 _p_ 参数不一定为 nil， 当 _p_ 不为 nil 的时候，是可能新建一个 M 来服务的，比如cgo调用，阻塞的系统调用等。
+// startm 简单来说是判断是否有空闲的 P，如果没有则返回，如果有空闲的 P，再尝试看有没有空闲的 M，有的话，唤醒该 M 起来工作。
+// 这样看起来好像 M 的个数会被 P 的个数限制，但其实不一定，因为 _p_ 参数不一定为 nil， 当 _p_ 不为 nil 的时候，是可能新建一个 M 来服务的，比如 cgo 调用，阻塞的系统调用等。
 func startm(_p_ *p, spinning bool) {
 	// Disable preemption.
 	//
@@ -2596,7 +2596,7 @@ func startm(_p_ *p, spinning bool) {
 	// disable preemption before acquiring a P from pidleget below.
 	mp := acquirem()
 	lock(&sched.lock)
-	// 如果P为nil，则尝试获取一个空闲P
+	// 如果 P 为 nil，则尝试获取一个空闲 P
 	if _p_ == nil {
 		_p_ = pidleget()
 		if _p_ == nil {
@@ -2654,8 +2654,8 @@ func startm(_p_ *p, spinning bool) {
 		throw("startm: p has runnable gs")
 	}
 	// The caller incremented nmspinning, so set m.spinning in the new M.
-	nmp.spinning = spinning // 标记该M是否在自旋
-	nmp.nextp.set(_p_)      // 暂存P
+	nmp.spinning = spinning // 标记该 M 是否在自旋
+	nmp.nextp.set(_p_)      // 暂存 P
 
 	// 唤醒 M
 	notewakeup(&nmp.park)
