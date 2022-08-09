@@ -45,7 +45,7 @@ import (
 // Pool 用 local 和 localSize 维护一个动态 poolLocal 数组。
 // 无论是 Get，还是 Put 操作都会通过 pin 来返回与当前 P 绑定的 poolLocal 对象
 type Pool struct {
-	noCopy noCopy  // go vet检测使用，防止Pool被拷贝，因为Pool 在Golang是全局唯一的
+	noCopy noCopy // go vet检测使用，防止Pool被拷贝，因为Pool 在Golang是全局唯一的
 
 	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal // [P]poolLocal 数组指针
 	localSize uintptr        // size of the local array  // 数组内 poolLocal 数量
@@ -58,7 +58,7 @@ type Pool struct {
 	// a value when Get would otherwise return nil.
 	// It may not be changed concurrently with calls to Get.
 	// Get 获取不到的创建新的对象使用
-	New func() any            // 新建对象函数
+	New func() any // 新建对象函数
 }
 
 // Local per-P Pool appendix.
@@ -280,7 +280,8 @@ func poolCleanup() {
 	}
 
 	// Move primary cache to victim cache.
-	// 遍历allPools
+	// 遍历 allPools, 回收到 victim, 在 Get 的时候复用
+	// 然后重置 p.local, p.localSize, 这里并没有直接释放内存
 	for _, p := range allPools {
 		p.victim = p.local
 		p.victimSize = p.localSize
