@@ -249,7 +249,7 @@ type heapArena struct {
 	// must not be a safe-point between establishing that an
 	// address is live and looking it up in the spans array.
 	//
-	// spans 是一个 *mspan 类型的数组，用于记录当前 arena 中每一页对应到哪一个 mspan。
+	// spans 是一个 *mspan 类型的数组，用于记录当前 arena 中 `每一页` 对应到哪一个 mspan。
 	spans [pagesPerArena]*mspan
 
 	// pageInUse is a bitmap that indicates which spans are in
@@ -329,16 +329,16 @@ type arenaHint struct {
 // mSpanManual, or mSpanFree. Transitions between these states are
 // constrained as follows:
 //
-// * A span may transition from free to in-use or manual during any GC
-//   phase.
+//   - A span may transition from free to in-use or manual during any GC
+//     phase.
 //
-// * During sweeping (gcphase == _GCoff), a span may transition from
-//   in-use to free (as a result of sweeping) or manual to free (as a
-//   result of stacks being freed).
+//   - During sweeping (gcphase == _GCoff), a span may transition from
+//     in-use to free (as a result of sweeping) or manual to free (as a
+//     result of stacks being freed).
 //
-// * During GC (gcphase != _GCoff), a span *must not* transition from
-//   manual or in-use to free. Because concurrent GC may read a pointer
-//   and then look up its span, the span state must be monotonic.
+//   - During GC (gcphase != _GCoff), a span *must not* transition from
+//     manual or in-use to free. Because concurrent GC may read a pointer
+//     and then look up its span, the span state must be monotonic.
 //
 // Setting mspan.state to mSpanInUse or mSpanManual must be done
 // atomically and only after all other span fields are valid.
@@ -359,8 +359,8 @@ const (
 // mSpanState.
 var mSpanStateNames = []string{
 	"mSpanDead",
-	"mSpanInUse",    // 分配给 堆 heap
-	"mSpanManual",   // 分配给 栈 stack
+	"mSpanInUse",  // 分配给 堆 heap
+	"mSpanManual", // 分配给 栈 stack
 	"mSpanFree",
 }
 
@@ -393,6 +393,7 @@ type mSpanList struct {
 //
 // 每个 span 都只存储一种大小的元素，类型规格记录在 mspan.spanClass中，
 // 类型规格覆盖了小于等于 32K 的 66 种大小，类型编号 1~66。大于 32K 的大对象直接在 mheap 中分配，对应 mspan 的类型编号为 0，这样一共有 67 种。
+//
 //go:notinheap
 type mspan struct {
 	next *mspan     // next span in list, or nil if none // 双向链表
@@ -419,9 +420,12 @@ type mspan struct {
 	// undefined and should never be referenced.
 	//
 	// Object n starts at address n*elemsize + (start << pageShift).
+	// 记录下个空闲内存块的索引
 	freeindex uintptr
+
 	// TODO: Look up nelems from sizeclass and remove this field if it
 	// helps performance.
+	// 当前 span 划分多少个内存块
 	nelems uintptr // number of object in the span.
 
 	// Cache of the allocBits at freeindex. allocCache is shifted
@@ -479,17 +483,17 @@ type mspan struct {
 	allocCount uint16 // number of allocated objects
 
 	// noscan 表示没有指针，不需要 GC 扫描
-	spanclass   spanClass     // size class and noscan (uint8)
+	spanclass spanClass // size class and noscan (uint8)
 
 	// 由于协程栈也是从堆上分配的，也在 mheap 管理的这些 span 中，
 	// mspan.state.mSpanState 会记录该 span 是用作 `堆内存`，还是用作 `栈内存`。
-	state       mSpanStateBox // mSpanInUse etc; accessed atomically (get/set methods)
+	state mSpanStateBox // mSpanInUse etc; accessed atomically (get/set methods)
 
-	needzero    uint8         // needs to be zeroed before allocation
-	elemsize    uintptr       // computed from sizeclass or from npages
-	limit       uintptr       // end of data in span
-	speciallock mutex         // guards specials list
-	specials    *special      // linked list of special records sorted by offset.
+	needzero    uint8    // needs to be zeroed before allocation
+	elemsize    uintptr  // computed from sizeclass or from npages
+	limit       uintptr  // end of data in span
+	speciallock mutex    // guards specials list
+	specials    *special // linked list of special records sorted by offset.
 }
 
 func (s *mspan) base() uintptr {
@@ -622,6 +626,7 @@ func (i arenaIdx) l2() uint {
 // inheap reports whether b is a pointer into a (potentially dead) heap object.
 // It returns false for pointers into mSpanManual spans.
 // Non-preemptible because it is used by write barriers.
+//
 //go:nowritebarrier
 //go:nosplit
 func inheap(b uintptr) bool {
@@ -1739,7 +1744,8 @@ func spanHasNoSpecials(s *mspan) {
 // offset & next, which this routine will fill in.
 // Returns true if the special was successfully added, false otherwise.
 // (The add will fail only if a record with the same p and s->kind
-//  already exists.)
+//
+//	already exists.)
 func addspecial(p unsafe.Pointer, s *special) bool {
 	span := spanOfHeap(uintptr(p))
 	if span == nil {

@@ -908,9 +908,13 @@ func (c *mcache) nextFree(spc spanClass) (v gclinkptr, s *mspan, shouldhelpgc bo
 // Large objects (> 32 kB) are allocated straight from the heap.
 //
 // 堆内存分配：mallocgc 函数
+// 1. 辅助 GC（辅助标记）
+// 2. 堆 heap 内存分配（按照不同规格分配 mspan）
+// 3. 位图标记（便于 GC 的工作）
+// 4. 收尾工作（有可能触发 GC）
 //
 // 用于申请内存的函数，如果遇到了比较小的对象会直接初始化在 Go 语言调度器里面的 P 结构中，
-// 而大于 32 KB 的对象会在堆上初始化
+// 而大于 32 KB 的对象会在堆上 heap 初始化
 func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 	if gcphase == _GCmarktermination {
 		throw("mallocgc called with gcphase == _GCmarktermination")
@@ -1405,6 +1409,7 @@ func persistentalloc(size, align uintptr, sysStat *sysMemStat) unsafe.Pointer {
 
 // Must run on system stack because stack growth can (re)invoke it.
 // See issue 9174.
+//
 //go:systemstack
 func persistentalloc1(size, align uintptr, sysStat *sysMemStat) *notInHeap {
 	const (
@@ -1474,6 +1479,7 @@ func persistentalloc1(size, align uintptr, sysStat *sysMemStat) *notInHeap {
 // inPersistentAlloc reports whether p points to memory allocated by
 // persistentalloc. This must be nosplit because it is called by the
 // cgo checker code, which is called by the write barrier code.
+//
 //go:nosplit
 func inPersistentAlloc(p uintptr) bool {
 	chunk := atomic.Loaduintptr((*uintptr)(unsafe.Pointer(&persistentChunks)))

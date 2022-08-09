@@ -40,6 +40,11 @@ type mcentral struct {
 	// encounter swept spans, and these should be ignored.
 	partial [2]spanSet // list of spans with a free object
 	full    [2]spanSet // list of spans with no free objects
+	// partial: 未用尽的 mspan
+	// full: 已用尽的 mspan
+	// partial/full 数组的两个成员：
+	//  - 已清扫的 span 集合
+	//  - 未清扫的 span 集合
 }
 
 // Initialize a single central free list.

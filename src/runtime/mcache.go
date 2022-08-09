@@ -35,12 +35,14 @@ type mcache struct {
 	//
 	// tinyAllocs is the number of tiny allocations performed
 	// by the P that owns this mcache.
+	// 本地队列 heap 分配，小于 16 B，noscan 的 tiny 对象
+	// tiny allocator 可以将小内存分配 ·合并·
 	tiny       uintptr
 	tinyoffset uintptr
 	tinyAllocs uintptr
 
 	// The rest is not accessed on every malloc.
-
+	// 本地队列 heap 分配，精准规格
 	alloc [numSpanClasses]*mspan // spans to allocate from, indexed by spanClass
 
 	// 同堆内存分配一样，每个 P 也有用于栈分配的本地缓存(mcache.stackcache)。
