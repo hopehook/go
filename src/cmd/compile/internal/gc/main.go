@@ -50,6 +50,23 @@ func hidePanic() {
 	}
 }
 
+// 编译器入口
+//
+// 该函数会先获取命令行传入的参数并更新编译选项和配置，
+// 随后会调用 cmd/compile/internal/gc.parseFiles 对输入的文件进行词法与语法分析得到对应的 `抽象语法树`。
+//
+// 得到抽象语法树后会分九个阶段对抽象语法树进行更新和编译，就像我们在上面介绍的，抽象语法树会经历类型检查、SSA 中间代码生成以及机器码生成三个阶段：
+//
+// 1. 检查常量、类型和函数的类型；
+// 2. 处理变量的赋值；
+// 3. 对函数的主体进行类型检查；
+// 4. 决定如何捕获变量；
+// 5. 检查内联函数的类型；
+// 6. 进行逃逸分析；
+// 7. 将闭包的主体转换成引用的捕获变量；
+// 8. 编译顶层函数；
+// 9. 检查外部依赖的声明；
+//
 // Main parses flags and Go source files specified in the command-line
 // arguments, type-checks the parsed Go package, compiles functions to machine
 // code, and finally writes the compiled package definition to disk.

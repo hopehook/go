@@ -27,6 +27,8 @@ const (
 	directives                  // call handler for directives only
 )
 
+// 词法解析
+// 这个结构体会持有当前扫描的数据源文件、启用的模式和当前被扫描到的 Token
 type scanner struct {
 	source
 	mode   uint
@@ -68,6 +70,12 @@ func (s *scanner) setLit(kind LitKind, ok bool) {
 	s.kind = kind
 }
 
+// 词法分析主要驱动函数
+//
+// 每次都会通过 cmd/compile/internal/syntax.source.nextch 函数获取文件中最近的未被解析的字符，
+// 然后根据当前字符的不同执行不同的 case，如果遇到了空格和换行符这些空白字符会直接跳过，
+// 如果当前字符是 0 就会执行 cmd/compile/internal/syntax.scanner.number 方法尝试匹配一个数字。
+//
 // next advances the scanner by reading the next token.
 //
 // If a read, source encoding, or lexical error occurs, next calls
@@ -472,6 +480,8 @@ func (s *scanner) digits(base int, invalid *int) (digsep int) {
 	return
 }
 
+// 在 for 循环中不断获取最新的字符，将字符通过 cmd/compile/internal/syntax.source.nextch
+// 方法追加到 cmd/compile/internal/syntax.scanner 持有的缓冲区中；
 func (s *scanner) number(seenPoint bool) {
 	ok := true
 	kind := IntLit

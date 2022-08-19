@@ -8,6 +8,7 @@ type token uint
 
 //go:generate stringer -type token -linecomment tokens.go
 
+// 所有词法分析的 token
 const (
 	_    token = iota
 	_EOF       // EOF
@@ -39,7 +40,7 @@ const (
 	_Dot       // .
 	_DotDotDot // ...
 
-	// keywords
+	// keywords 关键字
 	_Break       // break
 	_Case        // case
 	_Chan        // chan

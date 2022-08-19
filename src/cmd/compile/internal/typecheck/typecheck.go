@@ -261,6 +261,7 @@ func typecheckNtype(n ir.Ntype) ir.Ntype {
 	return typecheck(n, ctxType).(ir.Ntype)
 }
 
+// 做一些类型检查之前的准备工作，核心的逻辑都在 cmd/compile/internal/gc.typecheck1
 // typecheck type checks node n.
 // The result of typecheck MUST be assigned back to n, e.g.
 // 	n.Left = typecheck(n.Left, top)
@@ -466,6 +467,9 @@ func indexlit(n ir.Node) ir.Node {
 	return n
 }
 
+// cmd/compile/internal/gc.typecheck1 根据传入节点 Op 的类型进入不同的分支，
+// 其中包括加减乘数等操作符、函数调用、方法调用等 150 多种，因为节点的种类很多
+//
 // typecheck1 should ONLY be called from typecheck.
 func typecheck1(n ir.Node, top int) ir.Node {
 	if n, ok := n.(*ir.Name); ok {
@@ -539,6 +543,7 @@ func typecheck1(n ir.Node, top int) ir.Node {
 		n := n.(*ir.SliceType)
 		return tcSliceType(n)
 
+    // 如果当前节点的操作类型是 OTARRAY，那么这个分支首先会对右节点，也就是切片或者数组中元素的类型进行类型检查
 	case ir.OTARRAY:
 		n := n.(*ir.ArrayType)
 		return tcArrayType(n)

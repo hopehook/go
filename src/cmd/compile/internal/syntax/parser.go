@@ -2,6 +2,52 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// 一些 Go 语言文法的生产规则：
+//
+//  SourceFile = PackageClause ";" { ImportDecl ";" } { TopLevelDecl ";" } .
+//  PackageClause  = "package" PackageName .
+//  PackageName    = identifier .
+//
+//  ImportDecl       = "import" ( ImportSpec | "(" { ImportSpec ";" } ")" ) .
+//  ImportSpec       = [ "." | PackageName ] ImportPath .
+//  ImportPath       = string_lit .
+//
+//  TopLevelDecl  = Declaration | FunctionDecl | MethodDecl .
+//  Declaration   = ConstDecl | TypeDecl | VarDecl .
+//
+//  顶层声明有五大类型，分别是常量、类型、变量、函数和方法
+//  ConstDecl = "const" ( ConstSpec | "(" { ConstSpec ";" } ")" ) .
+//  ConstSpec = IdentifierList [ [ Type ] "=" ExpressionList ] .
+//
+//  TypeDecl  = "type" ( TypeSpec | "(" { TypeSpec ";" } ")" ) .
+//  TypeSpec  = AliasDecl | TypeDef .
+//  AliasDecl = identifier "=" Type .
+//  TypeDef   = identifier Type .
+//
+//  VarDecl = "var" ( VarSpec | "(" { VarSpec ";" } ")" ) .
+//  VarSpec = IdentifierList ( Type [ "=" ExpressionList ] | "=" ExpressionList ) .
+//
+// 函数和方法的定义就更加复杂，Statement 总共可以转换成 15 种不同的语法结构，这些语法结构就包括我们经常使用的
+// switch/case、if/else、for 循环以及 select 等语句：
+//
+//  FunctionDecl = "func" FunctionName Signature [ FunctionBody ] .
+//  FunctionName = identifier .
+//  FunctionBody = Block .
+//
+//  MethodDecl = "func" Receiver MethodName Signature [ FunctionBody ] .
+//  Receiver   = Parameters .
+//
+//  Block = "{" StatementList "}" .
+//  StatementList = { Statement ";" } .
+//
+//  Statement =
+//	  Declaration | LabeledStmt | SimpleStmt |
+//	  GoStmt | ReturnStmt | BreakStmt | ContinueStmt | GotoStmt |
+//	  FallthroughStmt | Block | IfStmt | SwitchStmt | SelectStmt | ForStmt |
+//	  DeferStmt .
+//
+//  SimpleStmt = EmptyStmt | ExpressionStmt | SendStmt | IncDecStmt | Assignment | ShortVarDecl .
+//
 package syntax
 
 import (
@@ -182,6 +228,7 @@ func trailingDigits(text string) (uint, uint, bool) {
 	return uint(i + 1), uint(n), err == nil
 }
 
+// 用于快速判断一些语句中的关键字，如果当前解析器中的 Token 是传入的 Token 就会直接跳过该 Token 并返回 true
 func (p *parser) got(tok token) bool {
 	if p.tok == tok {
 		p.next()
@@ -190,6 +237,7 @@ func (p *parser) got(tok token) bool {
 	return false
 }
 
+// 对 got 的简单封装了，如果当前 Token 不是我们期望的，就会立刻返回语法错误并结束这次编译。
 func (p *parser) want(tok token) {
 	if !p.got(tok) {
 		p.syntaxError("expecting " + tokstring(tok))
@@ -498,6 +546,8 @@ func (p *parser) list(sep, close token, f func() bool) Pos {
 	return pos
 }
 
+// 主要作用就是找出批量的定义
+//
 // appendGroup(f) = f | "(" { f ";" } ")" . // ";" is optional before ")"
 func (p *parser) appendGroup(list []Decl, f func(*Group) Decl) []Decl {
 	if p.tok == _Lparen {

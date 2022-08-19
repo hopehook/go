@@ -67,6 +67,18 @@ func InitEnv() {
 	}
 }
 
+// SSA 配置的初始化过程是中间代码生成之前的准备工作，在该过程中，
+// 我们会缓存可能用到的类型指针、初始化 SSA 配置和一些之后会调用的运行时函数，
+// 例如：用于处理 defer 关键字的 runtime.deferproc、用于创建 Goroutine 的 runtime.newproc
+// 和扩容切片的 runtime.growslice 等，除此之外还会根据当前的目标设备初始化特定的 ABI2。
+//
+// 这个函数的执行过程总共可以分成三个部分
+// 第一部分：
+//  - 首先就是调用 cmd/compile/internal/ssa.NewTypes 初始化 cmd/compile/internal/ssa.Types 结构体
+//  - 调用 cmd/compile/internal/types.NewPtr 函数缓存类型的信息，cmd/compile/internal/ssa.Types 中存储了所有 Go 语言中基本类型对应的指针，比如 Bool、Int8、以及 String 等。
+// 第二部分：
+//  - 根据当前的 CPU 架构初始化 SSA 配置，我们会向 cmd/compile/internal/ssa.NewConfig 函数传入目标机器的 CPU 架构、上述代码初始化的 cmd/compile/internal/ssa.Types 结构体、上下文信息和 Debug 配置
+//  - cmd/compile/internal/ssa.NewConfig 会根据传入的 CPU 架构设置用于生成中间代码和机器码的函数，当前编译器使用的指针、寄存器大小、可用寄存器列表、掩码等编译选项
 func InitConfig() {
 	types_ := ssa.NewTypes()
 
@@ -91,6 +103,7 @@ func InitConfig() {
 	ssaConfig.Race = base.Flag.Race
 	ssaCaches = make([]ssa.Cache, base.Flag.LowerC)
 
+	// 初始化一些编译器可能用到的 Go 语言运行时 runtime 的函数：
 	// Set up some runtime functions we'll need to call.
 	ir.Syms.AssertE2I = typecheck.LookupRuntimeFunc("assertE2I")
 	ir.Syms.AssertE2I2 = typecheck.LookupRuntimeFunc("assertE2I2")
@@ -6770,6 +6783,12 @@ func EmitArgInfo(f *ir.Func, abiInfo *abi.ABIParamResultInfo) *obj.LSym {
 	return x
 }
 
+// 函数会创建一个新的 cmd/compile/internal/gc.Progs 结构，并将生成的 SSA 中间代码都存入新建的结构体中
+// 我们得到的 ssa.html 文件就包含最后生成的中间代码
+//
+// cmd/compile/internal/gc.buildssa 中的 lower 和随后的多个阶段会对 SSA 进行转换、检查和优化，生成机器特定的中间代码，
+// 接下来通过 cmd/compile/internal/gc.genssa 将代码输出到 cmd/compile/internal/gc.Progs 对象中，这也是代码进入汇编器前的最后一个步骤。
+//
 // genssa appends entries to pp for each instruction in f.
 func genssa(f *ssa.Func, pp *objw.Progs) {
 	var s State

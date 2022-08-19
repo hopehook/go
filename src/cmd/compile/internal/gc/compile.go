@@ -94,6 +94,9 @@ func prepareFunc(fn *ir.Func) {
 	typecheck.DeclContext = ir.PEXTERN
 }
 
+// 编译整个 Go 语言项目中的 `全部函数`，这些函数会在一个编译队列中等待几个 Goroutine 的消费，
+// 并发执行的 Goroutine 会将所有函数对应的 `抽象语法树` 转换成 `中间代码`。
+//
 // compileFunctions compiles all functions in compilequeue.
 // It fans out nBackendWorkers to do the work
 // and waits for them to complete.

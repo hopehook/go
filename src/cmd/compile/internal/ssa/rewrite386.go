@@ -692,6 +692,8 @@ func rewriteValue386(v *Value) bool {
 	}
 	return false
 }
+
+// rewriteValue386_Op386ADCL 函数会使用 ADCLconst 替换 ADCL 和 MOVLconst 两条指令，它能通过对指令的压缩和优化减少在目标硬件上执行所需要的时间和资源。
 func rewriteValue386_Op386ADCL(v *Value) bool {
 	v_2 := v.Args[2]
 	v_1 := v.Args[1]
@@ -11750,6 +11752,9 @@ func rewriteValue386_OpZeromask(v *Value) bool {
 		return true
 	}
 }
+// x86 架构重写
+//
+// 重写的过程会将通用的 SSA 中间代码转换成目标架构特定的指令
 func rewriteBlock386(b *Block) bool {
 	switch b.Kind {
 	case Block386EQ:

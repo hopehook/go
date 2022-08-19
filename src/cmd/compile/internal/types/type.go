@@ -739,6 +739,8 @@ func NewMap(k, v *Type) *Type {
 	return t
 }
 
+// 主要作用是根据类型生成指向这些类型的指针，同时它会根据编译器的配置将生成的指针类型缓存在当前类型中，优化类型指针的获取效率
+//
 // NewPtrCacheEnabled controls whether *T Types are cached in T.
 // Caching is disabled just before starting the backend.
 // This allows the backend to run concurrently.

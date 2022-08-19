@@ -118,6 +118,7 @@ func (pp *Progs) NewProg() *obj.Prog {
 	return p
 }
 
+// 使用 cmd/internal/obj 包中的汇编器将 SSA 转换成汇编代码
 // Flush converts from pp to machine code.
 func (pp *Progs) Flush() {
 	plist := &obj.Plist{Firstpc: pp.Text, Curfn: pp.CurFunc}

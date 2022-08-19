@@ -19,6 +19,11 @@ type Plist struct {
 // It is used to provide access to cached/bulk-allocated Progs to the assemblers.
 type ProgAlloc func() *Prog
 
+// Go 编译器会在最外层的主函数确定调用的 Preprocess 和 Assemble 方法，
+// 编译器在 cmd/compile.archInits 中根据目标硬件初始化当前架构使用的配置。
+//
+// 如果目标机器的架构是 x86，那么这两个函数最终会使用 cmd/internal/obj/x86.preprocess 和 cmd/internal/obj/x86.span6，
+// 作者在这里就不展开介绍这两个特别复杂的底层函数了，有兴趣的读者可以通过链接找到目标函数的位置了解预处理和汇编的处理过程，机器码的生成也都是由这两个函数组合完成的。
 func Flushplist(ctxt *Link, plist *Plist, newprog ProgAlloc, myimportpath string) {
 	// Build list of symbols, and assign instructions to lists.
 	var curtext *LSym

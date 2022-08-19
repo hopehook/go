@@ -170,6 +170,10 @@ type Frontend interface {
 	MyImportPath() string
 }
 
+// 根据传入的 CPU 架构设置用于生成中间代码和机器码的函数，当前编译器使用的指针、寄存器大小、可用寄存器列表、掩码等编译选项
+//
+// 所有的配置项一旦被创建，在整个编译期间都是 `只读的` 并且被全部编译阶段共享，也就是中间代码生成和机器码生成这两部分都会使用这一份配置完成自己的工作。
+//
 // NewConfig returns a new configuration object for the given architecture.
 func NewConfig(arch string, types Types, ctxt *obj.Link, optimize, softfloat bool) *Config {
 	c := &Config{arch: arch, Types: types}

@@ -27,6 +27,8 @@ const (
 	removeDeadValues                 = true
 )
 
+// 传入的两个函数 lowerBlock 和 lowerValue 是在中间代码生成阶段初始化 SSA 配置时确定的，这两个函数会分别转换函数中的代码块和代码块中的值。
+//
 // deadcode indicates whether rewrite should try to remove any values that become dead.
 func applyRewrite(f *Func, rb blockRewriter, rv valueRewriter, deadcode deadValueChoice) {
 	// repeat rewrites until we find no more rewrites

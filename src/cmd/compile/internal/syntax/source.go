@@ -110,6 +110,7 @@ func (s *source) rewind() {
 	s.nextch()
 }
 
+// 获取文件中最近的未被解析的字符
 func (s *source) nextch() {
 redo:
 	s.col += uint(s.chw)

@@ -569,6 +569,7 @@ const (
 	markBit = 1 << 0 // used in errorCheck to avoid duplicate work
 )
 
+// 预处理
 func preprocess(ctxt *obj.Link, cursym *obj.LSym, newprog obj.ProgAlloc) {
 	if cursym.Func().Text == nil || cursym.Func().Text.Link == nil {
 		return

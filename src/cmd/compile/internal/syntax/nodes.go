@@ -32,11 +32,13 @@ func (*node) aNode()     {}
 // ----------------------------------------------------------------------------
 // Files
 
+// 语法分析器最终会使用不同的结构体来构建抽象语法树中的节点，其中 `根节点` cmd/compile/internal/syntax.File
+//
 // package PkgName; DeclList[0], DeclList[1], ...
 type File struct {
 	Pragma   Pragma
 	PkgName  *Name
-	DeclList []Decl
+	DeclList []Decl // 每一个 import 在解析器看来都是一个声明语句，这些声明语句都会被加入到文件的 DeclList 中。
 	EOF      Pos
 	node
 }
@@ -44,6 +46,7 @@ type File struct {
 // ----------------------------------------------------------------------------
 // Declarations
 
+// 其他节点的结构体，其中包含全部声明类型的
 type (
 	Decl interface {
 		Node
@@ -101,11 +104,11 @@ type (
 	// func Receiver Name Type
 	FuncDecl struct {
 		Pragma     Pragma
-		Recv       *Field // nil means regular function
-		Name       *Name
-		TParamList []*Field // nil means no type parameters
-		Type       *FuncType
-		Body       *BlockStmt // nil means no body (forward declaration)
+		Recv       *Field // nil means regular function  // 接受者
+		Name       *Name     // 函数名
+		TParamList []*Field // nil means no type parameters // 泛型参数
+		Type       *FuncType // 函数类型
+		Body       *BlockStmt // nil means no body (forward declaration) // 函数体
 		decl
 	}
 )
@@ -323,6 +326,7 @@ const (
 // ----------------------------------------------------------------------------
 // Statements
 
+// 函数的主体其实是一个 cmd/compile/internal/syntax.Stmt 数组
 type (
 	Stmt interface {
 		Node

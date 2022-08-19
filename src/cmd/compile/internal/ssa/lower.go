@@ -4,6 +4,7 @@
 
 package ssa
 
+// 将 SSA 的中间代码转换成机器特定的指令
 // convert to machine-dependent ops
 func lower(f *Func) {
 	// repeat rewrites until we find no more rewrites
